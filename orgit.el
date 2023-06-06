@@ -1,20 +1,22 @@
-;;; orgit.el --- Support for Org links to Magit buffers  -*- lexical-binding:t -*-
-
-;; Copyright (C) 2014-2023 The Magit Project Contributors
-
-;; Author: Jonas Bernoulli <jonas@bernoul.li>
-;; Homepage: https://github.com/magit/orgit
+;;; groot.el --- Support for Org links to Magit buffers  -*- lexical-binding:t -*-
+;;
+;; Author:     Cole Brown <http://github/cole-brown>
+;; Maintainer: Cole Brown <code@brown.dev>
+;; Created:    2023-06-06
+;; Modified:   2023-06-06
+;; Homepage: https://github.com/cole-brown/groot
 ;; Keywords: hypermedia vc
-
-;; Package-Version: 1.9.0
-;; Package-Requires: (
+;;
+;; TODO:pkg: Add back in.
+;; TODO:pkg: TODO-Package-Version: 1.9.0
+;; TODO:pkg: TODO-Package-Requires: (
 ;;     (emacs "25.1")
 ;;     (compat "29.1.4.1")
 ;;     (magit "3.3.0")
 ;;     (org "9.6.5"))
-
+;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-
+;;
 ;; This file is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published
 ;; by the Free Software Foundation, either version 3 of the License,
@@ -27,69 +29,50 @@
 ;;
 ;; You should have received a copy of the GNU General Public License
 ;; along with this file.  If not, see <https://www.gnu.org/licenses/>.
-
+;;
 ;;; Commentary:
-
-;; This package defines the Org link types `orgit', `orgit-rev', and
-;; `orgit-log', which can be used to link to Magit status, revision,
-;; and log buffers.
-
+;;
+;; TODO: COMMENTARY FOR GROOT!
+;;
+;; This package defines the Org link type `groot', which can be used to store
+;; relative path links to local git repo files.
+;; TODO: commentary about how and why and stuff.
+;;
 ;; Use the command `org-store-link' in such a buffer to store a link.
 ;; Later you can insert that into an Org buffer using the command
 ;; `org-insert-link'.
-
-;; Alternatively you can use `org-insert-link' to insert a link
-;; without first storing it.  When prompted, first enter just the
-;; link type followed by a colon and press RET.  Then you are
-;; prompted again and can provide the repository with completion.
-;; The `orgit-rev' and `orgit-log' types additionally read a revision,
-;; again with completion.
-
+;;
 ;; Format
 ;; ------
-
-;; The three link types defined here take these forms:
 ;;
-;;    orgit:/path/to/repo/            links to a `magit-status' buffer
-;;    orgit-rev:/path/to/repo/::REV   links to a `magit-revision' buffer
-;;    orgit-log:/path/to/repo/::ARGS  links to a `magit-log' buffer
-
-;; Before v1.3.0 only the first revision was stored in `orgit-log'
-;; links, and all other revisions were discarded.  All other arguments
-;; were also discarded and Magit's usual mechanism for determining the
-;; switches and options was used instead.
-
-;; For backward compatibility, and because it is the common case and
-;; looks best, ARGS by default has the form REV as before.  However if
-;; linking to a log buffer that shows the log for multiple revisions,
-;; then ("REV"...) is used instead.  If `orgit-log-save-arguments' is
-;; non-nil, then (("REV"...) ("ARG"...) [("FILE"...)]) is always used,
-;; which allows restoring the buffer most faithfully.
-
+;; The link type defined here take these forms:
+;;
+;;    groot:repo-name:/relative/path/file.ext
+;;
 ;; Export
 ;; ------
-
+;;
 ;; When an Org file containing such links is exported, then the url of
-;; the remote configured with `orgit-remote' is used to generate a web
-;; url according to `orgit-export-alist'.  That webpage should present
-;; approximately the same information as the Magit buffer would.
-
+;; the remote configured with `groot-remote' is used to generate a web
+;; url according to `groot-export-alist'.
+;;
 ;; Both the remote to be considered the public remote, as well as the
 ;; actual web urls can be defined in individual repositories using Git
 ;; variables.
-
-;; To use a remote different from `orgit-remote' but still use
-;; `orgit-export-alist' to generate the web urls, use:
 ;;
-;;    git config orgit.remote REMOTE-NAME
-
+;; To use a remote different from `groot-remote' but still use
+;; `groot-export-alist' to generate the web urls, use:
+;;
+;;    git config groot.remote REMOTE-NAME
+;;
 ;; To explicitly define the web urls, use something like:
 ;;
-;;    git config orgit.status http://example.com/repo/overview
-;;    git config orgit.rev http://example.com/repo/revision/%r
-;;    git config orgit.log http://example.com/repo/history/%r
-
+;;    git config groot.status http://example.com/repo/overview
+;;    git config groot.rev http://example.com/repo/revision/%r
+;;    git config groot.log http://example.com/repo/history/%r
+;;
 ;;; Code:
+
 
 (require 'cl-lib)
 (require 'compat)
@@ -97,6 +80,8 @@
 (require 'magit)
 (require 'org)
 
+
+;; Compatibility with Org <9.3 (released 2019-12-03).
 (unless (fboundp 'org-link-store-props)
   (defalias 'org-link-store-props 'org-store-link-props))
 
