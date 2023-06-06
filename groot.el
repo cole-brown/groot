@@ -89,12 +89,12 @@
 
 ;;; Options
 
-(defgroup orgit nil
+(defgroup groot nil
   "Org links to Magit buffers."
   :group 'magit-extensions
   :group 'org-link)
 
-(defcustom orgit-export-alist
+(defcustom groot-export-alist
   `(("github.com[:/]\\(.+?\\)\\(?:\\.git\\)?$"
      "https://github.com/%n"
      "https://github.com/%n/commits/%r"
@@ -133,34 +133,34 @@ LOG and REVISION additionally have to contain %r which is
 replaced with the appropriate revision.
 
 This can be overwritten in individual repositories using the Git
-variables `orgit.status', `orgit.log' and `orgit.commit'. The
+variables `groot.status', `groot.log' and `groot.commit'. The
 values of these variables must not contain %n, but in case of the
 latter two variables they must contain %r.  When these variables
-are defined then `orgit-remote' and `orgit.remote' have no effect."
-  :group 'orgit
+are defined then `groot-remote' and `groot.remote' have no effect."
+  :group 'groot
   :type '(repeat (list :tag "Remote template"
                        (regexp :tag "Remote regexp")
                        (string :tag "Status format")
                        (string :tag "Log format" :format "%{%t%}:    %v")
                        (string :tag "Revision format"))))
 
-(defcustom orgit-remote "origin"
+(defcustom groot-remote "origin"
   "Default remote used when exporting links.
 
 If there exists but one remote, then that is used unconditionally.
-Otherwise if the Git variable `orgit.remote' is defined and that
+Otherwise if the Git variable `groot.remote' is defined and that
 remote exists, then that is used.  Finally the value of this
 variable is used, provided it does exist in the given repository.
-If all of the above fails then `orgit-export' raises an error."
-  :group 'orgit
+If all of the above fails then `groot-export' raises an error."
+  :group 'groot
   :type 'string)
 
-(defcustom orgit-log-save-arguments nil
-  "Whether `orgit-log' links store arguments beside the revisions."
-  :group 'orgit
+(defcustom groot-log-save-arguments nil
+  "Whether `groot-log' links store arguments beside the revisions."
+  :group 'groot
   :type 'boolean)
 
-(defcustom orgit-store-repository-id nil
+(defcustom groot-store-repository-id nil
   "Whether to store only name of repository instead of path.
 
 If nil, then store the full path to the repository in the link.
@@ -178,12 +178,12 @@ with others, but be aware that doing so does not guarantee that
 others will be able to open these links.  The repository has to
 be checked out under the same name that you use and it has to be
 configured in `magit-repository-directory'."
-  :package-version '(orgit . "1.6.0")
-  :group 'orgit
+  :package-version '(groot . "1.6.0")
+  :group 'groot
   :type 'boolean)
 
-(defcustom orgit-store-reference nil
-  "Whether `orgit-rev-store' attempts to store link to a reference.
+(defcustom groot-store-reference nil
+  "Whether `groot-rev-store' attempts to store link to a reference.
 
 If nil, then store a link to the commit itself, using its full
 hash.
@@ -193,13 +193,13 @@ is not possible because no such reference points at the commit,
 then store a link to the commit itself.
 
 The prefix argument also affects how the revision is stored,
-see `orgit-rev-store'."
-  :package-version '(orgit . "1.6.0")
-  :group 'orgit
+see `groot-rev-store'."
+  :package-version '(groot . "1.6.0")
+  :group 'groot
   :type 'boolean)
 
-(defcustom orgit-rev-description-format "%%N (magit-rev %%R)"
-  "Format used for `orgit-rev' links.
+(defcustom groot-rev-description-format "%%N (magit-rev %%R)"
+  "Format used for `groot-rev' links.
 
 The format is used in two passes.  The first pass consumes all
 specs of the form `%C'; to preserve a spec for the second pass
@@ -211,19 +211,19 @@ in the git-show(1) manpage.
 The second pass accepts these specs:
 `%%N' The name or id of the repository.
 `%%R' Either a reference, abbreviated revision or revision of
-      the form \":/TEXT\".  See `orgit-ref-store'."
-  :package-version '(orgit . "1.8.0")
-  :group 'orgit
+      the form \":/TEXT\".  See `groot-ref-store'."
+  :package-version '(groot . "1.8.0")
+  :group 'groot
   :type 'string)
 
 ;;; Command
 
 ;;;###autoload
 (with-eval-after-load 'magit
-  (define-key magit-mode-map [remap org-store-link] #'orgit-store-link))
+  (define-key magit-mode-map [remap org-store-link] #'groot-store-link))
 
 ;;;###autoload
-(defun orgit-store-link (_arg)
+(defun groot-store-link (_arg)
   "Like `org-store-link' but store links to all selected commits, if any."
   (interactive "P")
   (if-let ((sections (magit-region-sections 'commit)))
@@ -241,58 +241,58 @@ The second pass accepts these specs:
 ;;;###autoload
 (with-eval-after-load 'org
   (with-eval-after-load 'magit
-    (org-link-set-parameters "orgit"
-                             :store    #'orgit-status-store
-                             :follow   #'orgit-status-open
-                             :export   #'orgit-status-export
-                             :complete #'orgit-status-complete-link)))
+    (org-link-set-parameters "groot"
+                             :store    #'groot-status-store
+                             :follow   #'groot-status-open
+                             :export   #'groot-status-export
+                             :complete #'groot-status-complete-link)))
 
 ;;;###autoload
-(defun orgit-status-store ()
+(defun groot-status-store ()
   "Store a link to a Magit-Status mode buffer.
 When the region selects one or more commits, then do nothing.
-In that case `orgit-rev-store' stores one or more links instead."
+In that case `groot-rev-store' stores one or more links instead."
   (when (and (eq major-mode 'magit-status-mode)
              (not (magit-region-sections '(commit issue pullreq))))
-    (let ((repo (orgit--current-repository)))
+    (let ((repo (groot--current-repository)))
       (org-link-store-props
-       :type        "orgit"
-       :link        (format "orgit:%s" repo)
+       :type        "groot"
+       :link        (format "groot:%s" repo)
        :description (format "%s (magit-status)" repo)))))
 
 ;;;###autoload
-(defun orgit-status-open (repo)
-  (magit-status-setup-buffer (orgit--repository-directory repo)))
+(defun groot-status-open (repo)
+  (magit-status-setup-buffer (groot--repository-directory repo)))
 
 ;;;###autoload
-(defun orgit-status-export (path desc format)
-  (orgit-export path desc format "status" 1))
+(defun groot-status-export (path desc format)
+  (groot-export path desc format "status" 1))
 
 ;;;###autoload
-(defun orgit-status-complete-link (&optional arg)
+(defun groot-status-complete-link (&optional arg)
   (let ((default-directory (magit-read-repository arg)))
-    (concat "orgit:" (orgit--current-repository))))
+    (concat "groot:" (groot--current-repository))))
 
 ;;; Log
 
 ;;;###autoload
 (with-eval-after-load 'org
   (with-eval-after-load 'magit
-    (org-link-set-parameters "orgit-log"
-                             :store    #'orgit-log-store
-                             :follow   #'orgit-log-open
-                             :export   #'orgit-log-export
-                             :complete #'orgit-log-complete-link)))
+    (org-link-set-parameters "groot-log"
+                             :store    #'groot-log-store
+                             :follow   #'groot-log-open
+                             :export   #'groot-log-export
+                             :complete #'groot-log-complete-link)))
 
 ;;;###autoload
-(defun orgit-log-store ()
+(defun groot-log-store ()
   "Store a link to a Magit-Log mode buffer.
 When the region selects one or more commits, then do nothing.
-In that case `orgit-rev-store' stores one or more links instead."
+In that case `groot-rev-store' stores one or more links instead."
   (when (and (eq major-mode 'magit-log-mode)
              (not (magit-region-sections 'commit)))
-    (let ((repo (orgit--current-repository))
-          (args (if orgit-log-save-arguments
+    (let ((repo (groot--current-repository))
+          (args (if groot-log-save-arguments
                     (if magit-buffer-log-files
                         (list magit-buffer-revisions
                               magit-buffer-log-args
@@ -301,14 +301,14 @@ In that case `orgit-rev-store' stores one or more links instead."
                             magit-buffer-log-args))
                   magit-buffer-revisions)))
       (org-link-store-props
-       :type        "orgit-log"
-       :link        (format "orgit-log:%s::%S" repo args)
+       :type        "groot-log"
+       :link        (format "groot-log:%s::%S" repo args)
        :description (format "%s %S" repo (cons 'magit-log args))))))
 
 ;;;###autoload
-(defun orgit-log-open (path)
+(defun groot-log-open (path)
   (pcase-let* ((`(,repo ,args) (split-string path "::"))
-               (default-directory (orgit--repository-directory repo))
+               (default-directory (groot--repository-directory repo))
                (`(,revs ,args ,files)
                 (cond ((string-prefix-p "((" args)
                        (read args))
@@ -319,7 +319,7 @@ In that case `orgit-rev-store' stores one or more links instead."
     (magit-log-setup-buffer revs args files)))
 
 ;;;###autoload
-(defun orgit-log-export (path desc format)
+(defun groot-log-export (path desc format)
   (pcase-let* ((`(,repo ,args) (split-string path "::"))
                (first-branch (cond ((string-prefix-p "((" args)
                                     (caar (read args)))
@@ -328,14 +328,14 @@ In that case `orgit-rev-store' stores one or more links instead."
                                    (t args))))
     (when (string-prefix-p "--" first-branch)
       (setq first-branch nil))
-    (orgit-export (concat repo "::" first-branch)
+    (groot-export (concat repo "::" first-branch)
                   desc format "log" 2)))
 
 ;;;###autoload
-(defun orgit-log-complete-link (&optional arg)
+(defun groot-log-complete-link (&optional arg)
   (let ((default-directory (magit-read-repository arg)))
-    (format "orgit-log:%s::%s"
-            (orgit--current-repository)
+    (format "groot-log:%s::%s"
+            (groot--current-repository)
             (magit-read-branch-or-commit "Revision"))))
 
 ;;; Revision
@@ -343,14 +343,14 @@ In that case `orgit-rev-store' stores one or more links instead."
 ;;;###autoload
 (with-eval-after-load 'org
   (with-eval-after-load 'magit
-    (org-link-set-parameters "orgit-rev"
-                             :store    #'orgit-rev-store
-                             :follow   #'orgit-rev-open
-                             :export   #'orgit-rev-export
-                             :complete #'orgit-rev-complete-link)))
+    (org-link-set-parameters "groot-rev"
+                             :store    #'groot-rev-store
+                             :follow   #'groot-rev-open
+                             :export   #'groot-rev-export
+                             :complete #'groot-rev-complete-link)))
 
 ;;;###autoload
-(defun orgit-rev-store ()
+(defun groot-rev-store ()
   "Store a link to a Magit-Revision mode buffer.
 
 By default store an abbreviated revision hash.
@@ -358,7 +358,7 @@ By default store an abbreviated revision hash.
 \\<global-map>With a single \\[universal-argument] \
 prefix argument instead store the name of a tag
 or branch that points at the revision, if any.  The meaning of this
-prefix argument is reversed if `orgit-store-reference' is non-nil.
+prefix argument is reversed if `groot-store-reference' is non-nil.
 
 With a single \\[negative-argument] \
 negative prefix argument store revision using the
@@ -370,17 +370,17 @@ stores a link itself, without calling this function.
 When the region selects one or more commits, e.g. in a log, then
 store links to the Magit-Revision mode buffers for these commits."
   (cond ((eq major-mode 'magit-revision-mode)
-         (orgit-rev-store-1 magit-buffer-revision))
+         (groot-rev-store-1 magit-buffer-revision))
         ((derived-mode-p 'magit-mode)
          (when-let* ((revs (magit-region-values 'commit)))
            ;; Cannot use and-let* because of debbugs#31840.
-           (mapc #'orgit-rev-store-1 revs)
+           (mapc #'groot-rev-store-1 revs)
            t))))
 
-(defun orgit-rev-store-1 (rev)
-  (pcase-let* ((repo (orgit--current-repository))
+(defun groot-rev-store-1 (rev)
+  (pcase-let* ((repo (groot--current-repository))
                (`(,rev ,desc)
-                (pcase (list current-prefix-arg orgit-store-reference)
+                (pcase (list current-prefix-arg groot-store-reference)
                   ((or '((4) nil) '(nil t))
                    (if-let ((ref (or (and (magit-ref-p rev) rev)
                                      (magit-name-tag rev)
@@ -395,56 +395,56 @@ store links to the Magit-Revision mode buffers for these commits."
                    (list (magit-rev-parse rev)
                          (magit-rev-abbrev rev))))))
     (org-link-store-props
-     :type        "orgit-rev"
-     :link        (format "orgit-rev:%s::%s" repo rev)
+     :type        "groot-rev"
+     :link        (format "groot-rev:%s::%s" repo rev)
      :description (format-spec
-                   (magit-rev-format orgit-rev-description-format rev)
+                   (magit-rev-format groot-rev-description-format rev)
                    `((?N . ,repo)
                      (?R . ,desc))))))
 
 ;;;###autoload
-(defun orgit-rev-open (path)
+(defun groot-rev-open (path)
   (pcase-let* ((`(,repo ,rev) (split-string path "::"))
-               (default-directory (orgit--repository-directory repo)))
+               (default-directory (groot--repository-directory repo)))
     (magit-revision-setup-buffer
      rev (car (magit-diff-arguments 'magit-revision-mode)) nil)))
 
 ;;;###autoload
-(defun orgit-rev-export (path desc format)
-  (orgit-export path desc format "rev" 3))
+(defun groot-rev-export (path desc format)
+  (groot-export path desc format "rev" 3))
 
 ;;;###autoload
-(defun orgit-rev-complete-link (&optional arg)
+(defun groot-rev-complete-link (&optional arg)
   (let ((default-directory (magit-read-repository arg)))
-    (format "orgit-rev:%s::%s"
-            (orgit--current-repository)
+    (format "groot-rev:%s::%s"
+            (groot--current-repository)
             (magit-read-branch-or-commit "Revision"))))
 
 ;;; Export
 
-(defun orgit-export (path desc format gitvar idx)
+(defun groot-export (path desc format gitvar idx)
   (pcase-let* ((`(,dir ,rev) (split-string path "::"))
-               (dir (orgit--repository-directory dir)))
+               (dir (groot--repository-directory dir)))
     (if (file-exists-p dir)
         (let* ((default-directory dir)
                (remotes (magit-git-lines "remote"))
-               (remote  (magit-get "orgit.remote"))
+               (remote  (magit-get "groot.remote"))
                (remote  (cond ((length= remotes 1) (car remotes))
                               ((member remote remotes) remote)
-                              ((member orgit-remote remotes) orgit-remote))))
+                              ((member groot-remote remotes) groot-remote))))
           (if remote
               (if-let ((link
-                        (or (and-let* ((url (magit-get "orgit" gitvar)))
+                        (or (and-let* ((url (magit-get "groot" gitvar)))
                               (format-spec url `((?r . ,rev))))
                             (and-let* ((url (magit-get "remote" remote "url"))
                                        (format (cl-find-if
                                                 (lambda (elt)
                                                   (string-match (car elt) url))
-                                                orgit-export-alist)))
+                                                groot-export-alist)))
                               (format-spec (nth idx format)
                                            `((?n . ,(match-string 1 url))
                                              (?r . ,rev)))))))
-                  (orgit--format-export link desc format)
+                  (groot--format-export link desc format)
                 (signal 'org-link-broken
                         (list (format "Cannot determine public url for %s"
                                       path))))
@@ -455,7 +455,7 @@ store links to the Magit-Revision mode buffers for these commits."
               (list (format "Cannot determine public url for %s %s"
                             path "(which itself does not exist)"))))))
 
-(defun orgit--format-export (link desc format)
+(defun groot--format-export (link desc format)
   (pcase format
     ('html  (format "<a href=\"%s\">%s</a>" link desc))
     ('latex (format "\\href{%s}{%s}" link desc))
@@ -464,12 +464,12 @@ store links to the Magit-Revision mode buffers for these commits."
 
 ;;; Utilities
 
-(defun orgit--current-repository ()
-  (or (and orgit-store-repository-id
+(defun groot--current-repository ()
+  (or (and groot-store-repository-id
            (car (rassoc default-directory (magit-repos-alist))))
       (abbreviate-file-name default-directory)))
 
-(defun orgit--repository-directory (repo)
+(defun groot--repository-directory (repo)
   (let ((dir (or (cdr (assoc repo (magit-repos-alist)))
                  (file-name-as-directory (expand-file-name repo)))))
     (cond ((file-exists-p dir) dir)
@@ -480,8 +480,8 @@ store links to the Magit-Revision mode buffers for these commits."
                   repo 'magit-repository-directories)))))
 
 ;;; _
-(provide 'orgit)
+(provide 'groot)
 ;; Local Variables:
 ;; indent-tabs-mode: nil
 ;; End:
-;;; orgit.el ends here
+;;; groot.el ends here
