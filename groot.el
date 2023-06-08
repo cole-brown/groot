@@ -1,11 +1,11 @@
-;;; groot.el --- Support for Org links to Magit buffers  -*- lexical-binding:t -*-
+;;; groot.el --- Support for Org links to Git repo & relative path.  -*- lexical-binding:t -*-
 ;;
 ;; Author:     Cole Brown <http://github/cole-brown>
 ;; Maintainer: Cole Brown <code@brown.dev>
 ;; Created:    2023-06-06
 ;; Modified:   2023-06-06
-;; Homepage: https://github.com/cole-brown/groot
-;; Keywords: hypermedia vc
+;; Homepage:   https://github.com/cole-brown/groot
+;; Keywords:   hypermedia vc
 ;;
 ;; TODO:pkg: Add back in.
 ;; TODO:pkg: TODO-Package-Version: 1.9.0
@@ -32,13 +32,10 @@
 ;;
 ;;; Commentary:
 ;;
-;; TODO: COMMENTARY FOR GROOT!
-;;
 ;; This package defines the Org link type `groot', which can be used to store
 ;; relative path links to local git repo files.
-;; TODO: commentary about how and why and stuff.
 ;;
-;; Use the command `org-store-link' in such a buffer to store a link.
+;; Use the command `org-store-link' in a file-backed buffer to store a link.
 ;; Later you can insert that into an Org buffer using the command
 ;; `org-insert-link'.
 ;;
@@ -51,6 +48,10 @@
 ;;
 ;; Export
 ;; ------
+;;
+;; TODO: Currently nothing special supported.
+;;
+;; TODO: COMMENTARY FOR GROOT EXPORT!
 ;;
 ;; When an Org file containing such links is exported, then the url of
 ;; the remote configured with `groot-remote' is used to generate a web
@@ -73,6 +74,9 @@
 ;;
 ;;; Code:
 
+;;------------------------------------------------------------------------------
+;; Prereqs & Compatibility
+;;------------------------------------------------------------------------------
 
 (require 'cl-lib)
 (require 'compat)
@@ -80,406 +84,663 @@
 (require 'magit)
 (require 'org)
 
-
 ;; Compatibility with Org <9.3 (released 2019-12-03).
 (unless (fboundp 'org-link-store-props)
   (defalias 'org-link-store-props 'org-store-link-props))
 
 (eval-when-compile (require 'subr-x))
 
-;;; Options
+
+;;--------------------------------------------------------------------------------
+;; Options
+;;--------------------------------------------------------------------------------
+
+;; TODO: Delete whatever we're not using.
 
 (defgroup groot nil
   "Org links to Magit buffers."
   :group 'magit-extensions
   :group 'org-link)
 
-(defcustom groot-export-alist
-  `(("github.com[:/]\\(.+?\\)\\(?:\\.git\\)?$"
-     "https://github.com/%n"
-     "https://github.com/%n/commits/%r"
-     "https://github.com/%n/commit/%r")
-    ("gitlab.com[:/]\\(.+?\\)\\(?:\\.git\\)?$"
-     "https://gitlab.com/%n"
-     "https://gitlab.com/%n/commits/%r"
-     "https://gitlab.com/%n/commit/%r")
-    ("git.sr.ht[:/]\\(.+?\\)\\(?:\\.git\\)?$"
-     "https://git.sr.ht/%n"
-     "https://git.sr.ht/%n/log/%r"
-     "https://git.sr.ht/%n/commit/%r")
-    ("bitbucket.org[:/]\\(.+?\\)\\(?:\\.git\\)?$"
-     "https://bitbucket.org/%n"
-     "https://bitbucket.org/%n/commits/branch/%r"
-     "https://bitbucket.org/%n/commits/%r")
-    ("code.orgmode.org[:/]\\(.+\\)$"
-     "https://code.orgmode.org/cgit.cgi/%n"
-     "https://code.orgmode.org/cgit.cgi/%n/commits/%r"
-     "https://code.orgmode.org/cgit.cgi/%n/commit/%r")
-    ("git.kernel.org/pub/scm[:/]\\(.+\\)$"
-     "https://git.kernel.org/cgit/%n"
-     "https://git.kernel.org/cgit/%n/log/?h=%r"
-     "https://git.kernel.org/cgit/%n/commit/?id=%r"))
-  "Alist used to translate Git urls to web urls when exporting links.
 
-Each entry has the form (REMOTE-REGEXP STATUS LOG REVISION).  If
-a REMOTE-REGEXP matches the url of the chosen remote then one of
-the corresponding format strings STATUS, LOG or REVISION is used
-according to the major mode of the buffer being linked to.
+(defcustom groot-repositories nil
+  "Alist of Git repositories.
 
-The first submatch of REMOTE-REGEXP has to match the repository
-identifier (which usually consists of the username and repository
-name).  The %n in the format string is replaced with that match.
-LOG and REVISION additionally have to contain %r which is
-replaced with the appropriate revision.
-
-This can be overwritten in individual repositories using the Git
-variables `groot.status', `groot.log' and `groot.commit'. The
-values of these variables must not contain %n, but in case of the
-latter two variables they must contain %r.  When these variables
-are defined then `groot-remote' and `groot.remote' have no effect."
+Each element has the form (NAME . PATH)
+  - NAME: string - repository's name (usually the same as the repo dir name)
+  - PATH: string - absolute path to the repo's root directory"
   :group 'groot
-  :type '(repeat (list :tag "Remote template"
-                       (regexp :tag "Remote regexp")
-                       (string :tag "Status format")
-                       (string :tag "Log format" :format "%{%t%}:    %v")
-                       (string :tag "Revision format"))))
+  :type '(alist :key-type string :value-type directory))
 
-(defcustom groot-remote "origin"
-  "Default remote used when exporting links.
 
-If there exists but one remote, then that is used unconditionally.
-Otherwise if the Git variable `groot.remote' is defined and that
-remote exists, then that is used.  Finally the value of this
-variable is used, provided it does exist in the given repository.
-If all of the above fails then `groot-export' raises an error."
-  :group 'groot
-  :type 'string)
+;; TODO: export functionality!
+;; (defcustom groot-export-alist
+;;   `(("github.com[:/]\\(.+?\\)\\(?:\\.git\\)?$"
+;;      "https://github.com/%n"
+;;      "https://github.com/%n/commits/%r"
+;;      "https://github.com/%n/commit/%r")
+;;     ("gitlab.com[:/]\\(.+?\\)\\(?:\\.git\\)?$"
+;;      "https://gitlab.com/%n"
+;;      "https://gitlab.com/%n/commits/%r"
+;;      "https://gitlab.com/%n/commit/%r")
+;;     ("git.sr.ht[:/]\\(.+?\\)\\(?:\\.git\\)?$"
+;;      "https://git.sr.ht/%n"
+;;      "https://git.sr.ht/%n/log/%r"
+;;      "https://git.sr.ht/%n/commit/%r")
+;;     ("bitbucket.org[:/]\\(.+?\\)\\(?:\\.git\\)?$"
+;;      "https://bitbucket.org/%n"
+;;      "https://bitbucket.org/%n/commits/branch/%r"
+;;      "https://bitbucket.org/%n/commits/%r")
+;;     ("code.orgmode.org[:/]\\(.+\\)$"
+;;      "https://code.orgmode.org/cgit.cgi/%n"
+;;      "https://code.orgmode.org/cgit.cgi/%n/commits/%r"
+;;      "https://code.orgmode.org/cgit.cgi/%n/commit/%r")
+;;     ("git.kernel.org/pub/scm[:/]\\(.+\\)$"
+;;      "https://git.kernel.org/cgit/%n"
+;;      "https://git.kernel.org/cgit/%n/log/?h=%r"
+;;      "https://git.kernel.org/cgit/%n/commit/?id=%r"))
+;;   "Alist used to translate Git urls to web urls when exporting links.
+;;
+;; Each entry has the form (REMOTE-REGEXP STATUS LOG REVISION).  If
+;; a REMOTE-REGEXP matches the url of the chosen remote then one of
+;; the corresponding format strings STATUS, LOG or REVISION is used
+;; according to the major mode of the buffer being linked to.
+;;
+;; The first submatch of REMOTE-REGEXP has to match the repository
+;; identifier (which usually consists of the username and repository
+;; name).  The %n in the format string is replaced with that match.
+;; LOG and REVISION additionally have to contain %r which is
+;; replaced with the appropriate revision.
+;;
+;; This can be overwritten in individual repositories using the Git
+;; variables `groot.status', `groot.log' and `groot.commit'. The
+;; values of these variables must not contain %n, but in case of the
+;; latter two variables they must contain %r.  When these variables
+;; are defined then `groot-remote' and `groot.remote' have no effect."
+;;   :group 'groot
+;;   :type '(repeat (list :tag "Remote template"
+;;                        (regexp :tag "Remote regexp")
+;;                        (string :tag "Status format")
+;;                        (string :tag "Log format" :format "%{%t%}:    %v")
+;;                        (string :tag "Revision format"))))
+;;
+;;
+;; (defcustom groot-remote "origin"
+;;   "Default remote used when exporting links.
+;;
+;; If there exists but one remote, then that is used unconditionally.
+;; Otherwise if the Git variable `groot.remote' is defined and that
+;; remote exists, then that is used.  Finally the value of this
+;; variable is used, provided it does exist in the given repository.
+;; If all of the above fails then `groot-export' raises an error."
+;;   :group 'groot
+;;   :type 'string)
 
-(defcustom groot-log-save-arguments nil
-  "Whether `groot-log' links store arguments beside the revisions."
-  :group 'groot
-  :type 'boolean)
 
-(defcustom groot-store-repository-id nil
-  "Whether to store only name of repository instead of path.
+;;--------------------------------------------------------------------------------
+;; Validation
+;;--------------------------------------------------------------------------------
 
-If nil, then store the full path to the repository in the link.
+(cl-defun groot--path-assert (context path &key error? dir?)
+  "Ensure PATH is valid.
 
-If t, then attempt to store only the name of the repository.
-This works by looking up the repository's path in the list of
-repositories defined by `magit-repository-directories'.  If the
-repository cannot be found there, then the path is used instead.
-If the repository is checked out multiple times, then the names
-of the clones are made unique by adding additional parts of the
-path.
+CONTEXT should be a string suitable for displaying in an error to the user.
+CONTEXT will be prepended to error messages:
+  \"CONTEXT: <error message>\"
 
-Storing just the name can be useful if you want to share links
-with others, but be aware that doing so does not guarantee that
-others will be able to open these links.  The repository has to
-be checked out under the same name that you use and it has to be
-configured in `magit-repository-directory'."
-  :package-version '(groot . "1.6.0")
-  :group 'groot
-  :type 'boolean)
+PATH is always required to:
+  - be a string
+  - be an existing path
 
-(defcustom groot-store-reference nil
-  "Whether `groot-rev-store' attempts to store link to a reference.
+PATH is optionally required to:
+  - DIR? non-nil: be an existing directory
 
-If nil, then store a link to the commit itself, using its full
-hash.
+If ERROR? is non-nil, raise an error signal with details on why it is invalid.
+If ERROR? is nil, just return nil on invalid PATH.
 
-If t, then attempt to store a link to a tag or branch.  If that
-is not possible because no such reference points at the commit,
-then store a link to the commit itself.
+Return PATH, nil, or raise error signal."
+  ;;------------------------------
+  ;; Invalid
+  ;;------------------------------
+  (cond ((not (stringp path))
+         (if error?
+             (error "%s: PATH must be a string or nil, got '%s': '%S'"
+                    context
+                    (type-of path)
+                    path)
+           nil))
 
-The prefix argument also affects how the revision is stored,
-see `groot-rev-store'."
-  :package-version '(groot . "1.6.0")
-  :group 'groot
-  :type 'boolean)
+        ((not (file-exists-p path))
+         (if error?
+             (error "%s: PATH does not exist? '%s'"
+                    context
+                    path)
+           nil))
 
-(defcustom groot-rev-description-format "%%N (magit-rev %%R)"
-  "Format used for `groot-rev' links.
+        ((and dir?
+              (not (file-directory-p path)))
+         (if error?
+             (error "%s: PATH is not a directory? '%s'"
+                    context
+                    path)
+           nil))
 
-The format is used in two passes.  The first pass consumes all
-specs of the form `%C'; to preserve a spec for the second pass
-it has to be quoted like `%%C'.
+        ;;------------------------------
+        ;; Valid
+        ;;------------------------------
+        ;; Got past all the requirements, so return non-nil for success.
+        (t
+         path)))
+;; (groot--path-assert "test 1" (buffer-file-name) :error? t)
+;; (groot--path-assert "test 2" (buffer-file-name) :error? t :dir? t)
+;; (groot--path-assert "test 3" (buffer-file-name) :dir? t)
 
-The first pass accepts the \"pretty format\" specs documented
-in the git-show(1) manpage.
 
-The second pass accepts these specs:
-`%%N' The name or id of the repository.
-`%%R' Either a reference, abbreviated revision or revision of
-      the form \":/TEXT\".  See `groot-ref-store'."
-  :package-version '(groot . "1.8.0")
-  :group 'groot
-  :type 'string)
+(cl-defun groot--name-assert (context name &key error?)
+  "Ensure NAME is valid.
 
-;;; Command
+CONTEXT should be a string suitable for displaying in an error to the user.
+CONTEXT will be prepended to error messages:
+  \"CONTEXT: <error message>\"
 
-;;;###autoload
-(with-eval-after-load 'magit
-  (define-key magit-mode-map [remap org-store-link] #'groot-store-link))
+NAME is always required to:
+  - be a string
 
-;;;###autoload
-(defun groot-store-link (_arg)
-  "Like `org-store-link' but store links to all selected commits, if any."
-  (interactive "P")
-  (if-let ((sections (magit-region-sections 'commit)))
-      (save-excursion
-        (dolist (section sections)
-          (goto-char (oref section start))
-          (set-mark (point))
-          (activate-mark)
-          (call-interactively #'org-store-link))
-        (deactivate-mark))
-    (call-interactively #'org-store-link)))
+If ERROR? is non-nil, raise an error signal with details on why it is invalid.
+If ERROR? is nil, just return nil on invalid NAME.
 
-;;; Status
+Return NAME, nil, or raise error signal."
+  ;;------------------------------
+  ;; Invalid
+  ;;------------------------------
+  (cond ((not (stringp name))
+         (if error?
+             (error "%s: NAME must be a string, got '%s': '%S'"
+                    context
+                    (type-of name)
+                    name)
+           nil))
+
+        ;;------------------------------
+        ;; Valid
+        ;;------------------------------
+        ;; Got past all the requirements, so return non-nil for success.
+        (t
+         name)))
+;; (groot--name-assert "test 1" "name" :error? t)
+;; (groot--name-assert "test 2" nil :error? t)
+;; (groot--name-assert "test 3" :name :error? t)
+
+
+;;--------------------------------------------------------------------------------
+;; Getters & Setters
+;;--------------------------------------------------------------------------------
+
+(defun groot-repositories (name)
+  "Getter for alist `groot-repositories'.
+
+NAME should be a string.
+
+Allows for cons or list entries:
+  '((NAME-0 . PATH-0)
+    (NAME-1 PATH-1))
+
+Return normalized path or nil."
+  (when-let ((value (alist-get name groot-repositories nil nil #'string=)))
+    (groot--path-normalize (if (listp value)
+                               (nth 0 value)
+                             value))))
+;; (setq groot-repositories '((".emacs.d" . "~/.config/emacs-sn004") ("personal" "~/.config/personal")))
+;; (groot-repositories ".emacs.d")
+;; (groot-repositories "personal")
+;; (groot-repositories "does-not-exist1")
+
+
+(defun groot--repository-name-to-path (name)
+  "Get path to repository NAME.
+
+NAME should be a string.
+
+Return absolute path string to repository root, or nil if not found.
+
+NOTE: No error checking of NAME! Use `groot--name-assert' if desired."
+  (or
+   ;;------------------------------
+   ;; Seach Groot Repo List
+   ;;------------------------------
+   (groot-repositories name)
+
+   ;;------------------------------
+   ;; Optional: Search Autogit Commit Repo List?
+   ;;------------------------------
+   (when (bound-and-true-p autogit:repos:path/commit)
+     (let (path-found
+           (repo-list autogit:repos:path/commit)) ; list of path strings
+       (while (and (null path-found)
+                   repo-list)
+         (when-let* ((repo-path (pop repo-list)))
+           ;; Ensure path is a repo root.
+           (setq repo-path (groot--repository-path-normalize repo-path))
+           (when (string= name
+                          (groot--name-normalize repo-path))
+             ;; Found it!
+             (setq path-found repo-path))))
+
+       ;; Did we find anything?
+       path-found))
+
+   ;;------------------------------
+   ;; Optional: Search Autogit Watch Repo List?
+   ;;------------------------------
+   (when (bound-and-true-p autogit:repos:path/watch)
+     (let (path-found
+           (repo-list autogit:repos:path/watch)) ; list of path strings
+       (while (and (null path-found)
+                   repo-list)
+         (when-let* ((repo-path (pop repo-list)))
+           ;; Ensure path is a repo root.
+           (setq repo-path (groot--repository-path-normalize repo-path))
+           (when (string= name
+                          (groot--name-normalize repo-path))
+             ;; Found it!
+             (setq path-found repo-path))))
+
+       ;; Did we find anything?
+       path-found))
+
+   ;;------------------------------
+   ;; Optional: Search Magit Repo List?
+   ;;------------------------------
+   (when (bound-and-true-p magit-repository-directories)
+     ;; NOTE: `magit-repository-directories' is an alist of dirs that are _OR THAT MAY CONTAIN_ git
+     ;; repos. Convert into actual git repos with `magit-repos-alist'. We'll end up with an alist
+     ;; with entries: (REPO-DIR-NAME . REPO-PATH)
+     (alist-get name (magit-repos-alist) nil nil #'string=))))
+;; (setq groot-repositories '((".emacs.d" . "~/.config/emacs-sn004") ("personal" "~/.config/personal")))
+;; (groot--repository-name-to-path ".emacs.d")
+;; (groot--repository-name-to-path "personal")
+;; (groot--repository-name-to-path "lily.d")
+;; (groot--repository-name-to-path "smudge")
+;; (groot--repository-name-to-path "openiddict-ui")
+;;
+;; (groot--repository-name-to-path "does-not-exist")
+;; (groot--repository-name-to-path nil)
+
+
+;;--------------------------------------------------------------------------------
+;; Normalization
+;;--------------------------------------------------------------------------------
+
+(cl-defun groot--path-normalize (path &key (file? nil))
+  "Normalize PATH string.
+
+If PATH is not a string, normalize to nil.
+Else return PATH that is:
+  - absolute
+  - abbreviated (e.g. \"~\" instead of \"/home/username\")
+  - FILE?:
+    - nil    : directory path (i.e. must end in dir separator)
+    - non-nil: file path (cannot end in dir separator)
+
+NOTE: No error checking! Use `groot--path-assert' if desired."
+  (when (stringp path)
+    (abbreviate-file-name ; path abbreviations like "~"
+     (funcall
+      (if file?
+          #'directory-file-name ; as file path
+        #'file-name-as-directory) ; as directory path
+      ;; absolute path
+      (expand-file-name path)))))
+;; (groot--path-normalize "~/.config")
+;; (groot--path-normalize "/home/work/.config")
+;; (groot--path-normalize "actual-package-stuff")
+;; (groot--path-normalize default-directory)
+;; (groot--path-normalize (buffer-file-name (buffer-base-buffer)))
+;; (groot--path-normalize (buffer-file-name (buffer-base-buffer)) :file? t)
+;; (groot--path-normalize 'hi)
+
+
+(defun groot--name-normalize (path)
+  "Get the name of the final directory in PATH.
+
+PATH should be a directory path string.
+If PATH is not a string, normalize name to nil.
+
+NOTE: No error checking! Use `groot--path-assert' if desired."
+  (when (stringp path)
+    (file-name-nondirectory ; Get dir name from filepath.
+     (directory-file-name ; Convert dirpath to filepath.
+      (groot--path-normalize path)))))
+;; (groot--name-normalize default-directory)
+;; (groot--name-normalize (buffer-file-name))
+;; (groot--name-normalize 'hi)
+
+
+(defun groot--repository-path-normalize (path)
+  "Get absolute path to Git repository root of PATH.
+
+PATH should be a path string.
+
+Return path that is:
+  - absolute
+  - abbreviated (e.g. \"~\" instead of \"/home/username\")
+  - directory (i.e. ends in dir separator)
+
+NOTE: No error checking of PATH! Use `groot--path-assert' if desired."
+  (when (stringp path)
+    ;; `magit' does the heavy lifting.
+    (groot--path-normalize (magit-toplevel path))))
+;; (groot--repository-path-normalize nil)
+;; (groot--repository-path-normalize "~/.config/emacs-sn004/mantle/config")
+
+
+(defun groot--repository-name-normalize (path)
+  "Get the name of the git repo's root directory from PATH.
+
+PATH should be a path string.
+
+Usually name is equivalent to the git repo root directory's name, except when
+an alias name is provided in alist `groot-repositories'.
+
+Signal an error if path is invaild or not in a Git repository, or if the current
+Git repo isn't known enough for later link following, signal an error."
+  (when-let ((path-normal (groot--repository-path-normalize path)))
+    (or
+     ;;------------------------------
+     ;; Search for an alias first.
+     ;;------------------------------
+     (let ((aliases groot-repositories)
+           alias)
+       (while (and (null alias)
+                   aliases)
+         (if-let* ((entry (pop aliases))
+                   (entry-alias (car entry))
+                   (entry-path (if (listp (cdr entry))
+                                   (nth 1 entry)
+                                 (cdr entry))))
+             ;; NOTE: Paths in `groot-repositories' not guarenteed to be normalized!
+             (when (string= (groot--path-normalize entry-path)
+                            path-normal)
+               (setq alias entry-alias))))
+       ;; Did we find an alias?
+       alias)
+
+     ;;------------------------------
+     ;; Fallback
+     ;;------------------------------
+     ;; No alias? Just use the dir name.
+     (groot--name-normalize path-normal))))
+;; (groot--repository-name-normalize default-directory)
+
+
+(defun groot--repository-path-rooted (root path)
+  "Get PATH relative to ROOT.
+
+PATH should be a path string.
+ROOT should be a path string that is a parent of PATH.
+
+NOTE: No error checking of parameters! Use `groot--path-assert' if desired."
+  (string-trim-left path (regexp-quote root)))
+;; (groot--repository-path-rooted (groot--repository-current-path) (groot--path-normalize (buffer-file-name (buffer-base-buffer)) :file? t))
+
+
+;;--------------------------------------------------------------------------------
+;; Current Repository / Path
+;;--------------------------------------------------------------------------------
+
+(cl-defun groot--repository-current-path (&key (error? t))
+  "Get absolute path to current Git repository according to `default-directory'.
+
+If ERROR? is nil, eat error signals and return nil instead.
+
+Return absolute directory (ends in dir separator) path."
+  (let ((path (groot--path-normalize default-directory)))
+    ;; Require `default-directory' exist as a directory.
+    (if (not (groot--path-assert "repository-current-path"
+                                 path
+                                 :error? error?
+                                 :dir? t))
+        ;; `path' is invalid but we didn't want an error signal, so just
+        ;; make sure to not continue on doing stuff.
+        nil
+
+      ;; Figure out repo's root path.
+      (groot--repository-path-normalize path))))
+;; (groot--repository-current-path)
+;; (let (default-directory) (groot--repository-current-path))
+;; (let (default-directory) (groot--repository-current-path :error? t))
+;; (let (default-directory) (groot--repository-current-path :error? nil))
+
+
+(cl-defun groot--repository-current-name (&key (error? t))
+  "Get the name of current git repo according to `default-directory'.
+
+Usually name is equivalent to the git repo root directory's name, except when
+an alias name is provided in alist `groot-repositories', or maybe
+`magit-repos-alist'.
+
+If ERROR? is nil, eat error signals and return nil instead.
+
+Return a string, nil, or raise an error signal."
+  (groot--repository-name-normalize (groot--repository-current-path :error? error?)))
+;; (groot--repository-current-name)
+;; (let (default-directory) (groot--repository-current-name))
+;; (let (default-directory) (groot--repository-current-name :error? nil))
+
+
+(cl-defun groot--path-current (&key (error? t))
+  "Get absolute path to current file-backed buffer.
+
+If ERROR? is nil, eat error signals and return nil instead.
+
+Return absolute filepath."
+  ;; Get filename of current buffer (if indirect, get filename of base buffer).
+  (let ((path (groot--path-normalize (buffer-file-name (buffer-base-buffer)))))
+    ;; Require the file actually exist? If that's annoying for some reason, can
+    ;; remove or make another kwarg...
+    (if (not (groot--path-assert "path-current"
+                                 path
+                                 :error? error?
+                                 :dir? nil))
+        ;; `path' is invalid but we didn't want an error signal, so just
+        ;; make sure to not continue on doing stuff.
+        nil
+
+      ;; Nothing more to do.
+      path)))
+;; (groot--path-current)
+;; (let (default-directory) (groot--path-current))
+;; (let (default-directory) (groot--path-current :error? nil))
+
+
+;;--------------------------------------------------------------------------------
+;; Git-Rooted Paths
+;;--------------------------------------------------------------------------------
 
 ;;;###autoload
 (with-eval-after-load 'org
-  (with-eval-after-load 'magit
-    (org-link-set-parameters "groot"
-                             :store    #'groot-status-store
-                             :follow   #'groot-status-open
-                             :export   #'groot-status-export
-                             :complete #'groot-status-complete-link)))
+  ;; Do we need to wait for magit, or not? Assume not until proven so.
+  ;; (with-eval-after-load 'magit
+  (org-link-set-parameters "groot"
+                           :store    #'groot-link--store
+                           :follow   #'groot-link--open
+                           ;; TODO: More org link functionality!
+                           ;; :export   #'groot-link--export
+                           ;; :complete #'groot-link--complete-link
+                           ))
+
 
 ;;;###autoload
-(defun groot-status-store ()
-  "Store a link to a Magit-Status mode buffer.
-When the region selects one or more commits, then do nothing.
-In that case `groot-rev-store' stores one or more links instead."
-  (when (and (eq major-mode 'magit-status-mode)
-             (not (magit-region-sections '(commit issue pullreq))))
-    (let ((repo (groot--current-repository)))
-      (org-link-store-props
-       :type        "groot"
-       :link        (format "groot:%s" repo)
-       :description (format "%s (magit-status)" repo)))))
+(defun groot-link--store ()
+  "Store a link to a file in a Git repository.
 
-;;;###autoload
-(defun groot-status-open (repo)
-  (magit-status-setup-buffer (groot--repository-directory repo)))
+Link will be in format:
+  - groot:repo-name:/path/rooted/in/repo.ext"
+  ;;------------------------------
+  ;; Sanity Checks
+  ;;------------------------------
+  (let ((repo-path (groot--repository-current-path :error? t))
+        (repo-name (groot--repository-current-name :error? t))
+        (buffer-path (groot--path-normalize (buffer-file-name (buffer-base-buffer))
+                                            :file? t)))
+    (groot--path-assert "groot-link-store"
+                        buffer-path
+                        :error? t
+                        :dir? nil)
 
-;;;###autoload
-(defun groot-status-export (path desc format)
-  (groot-export path desc format "status" 1))
-
-;;;###autoload
-(defun groot-status-complete-link (&optional arg)
-  (let ((default-directory (magit-read-repository arg)))
-    (concat "groot:" (groot--current-repository))))
-
-;;; Log
-
-;;;###autoload
-(with-eval-after-load 'org
-  (with-eval-after-load 'magit
-    (org-link-set-parameters "groot-log"
-                             :store    #'groot-log-store
-                             :follow   #'groot-log-open
-                             :export   #'groot-log-export
-                             :complete #'groot-log-complete-link)))
-
-;;;###autoload
-(defun groot-log-store ()
-  "Store a link to a Magit-Log mode buffer.
-When the region selects one or more commits, then do nothing.
-In that case `groot-rev-store' stores one or more links instead."
-  (when (and (eq major-mode 'magit-log-mode)
-             (not (magit-region-sections 'commit)))
-    (let ((repo (groot--current-repository))
-          (args (if groot-log-save-arguments
-                    (if magit-buffer-log-files
-                        (list magit-buffer-revisions
-                              magit-buffer-log-args
-                              magit-buffer-log-files)
-                      (list magit-buffer-revisions
-                            magit-buffer-log-args))
-                  magit-buffer-revisions)))
-      (org-link-store-props
-       :type        "groot-log"
-       :link        (format "groot-log:%s::%S" repo args)
-       :description (format "%s %S" repo (cons 'magit-log args))))))
-
-;;;###autoload
-(defun groot-log-open (path)
-  (pcase-let* ((`(,repo ,args) (split-string path "::"))
-               (default-directory (groot--repository-directory repo))
-               (`(,revs ,args ,files)
-                (cond ((string-prefix-p "((" args)
-                       (read args))
-                      ((string-prefix-p "(" args)
-                       (list (read args) (car (magit-log-arguments))))
-                      (t
-                       (list (list args) (car (magit-log-arguments)))))))
-    (magit-log-setup-buffer revs args files)))
-
-;;;###autoload
-(defun groot-log-export (path desc format)
-  (pcase-let* ((`(,repo ,args) (split-string path "::"))
-               (first-branch (cond ((string-prefix-p "((" args)
-                                    (caar (read args)))
-                                   ((string-prefix-p "(" args)
-                                    (car (read args)))
-                                   (t args))))
-    (when (string-prefix-p "--" first-branch)
-      (setq first-branch nil))
-    (groot-export (concat repo "::" first-branch)
-                  desc format "log" 2)))
-
-;;;###autoload
-(defun groot-log-complete-link (&optional arg)
-  (let ((default-directory (magit-read-repository arg)))
-    (format "groot-log:%s::%s"
-            (groot--current-repository)
-            (magit-read-branch-or-commit "Revision"))))
-
-;;; Revision
-
-;;;###autoload
-(with-eval-after-load 'org
-  (with-eval-after-load 'magit
-    (org-link-set-parameters "groot-rev"
-                             :store    #'groot-rev-store
-                             :follow   #'groot-rev-open
-                             :export   #'groot-rev-export
-                             :complete #'groot-rev-complete-link)))
-
-;;;###autoload
-(defun groot-rev-store ()
-  "Store a link to a Magit-Revision mode buffer.
-
-By default store an abbreviated revision hash.
-
-\\<global-map>With a single \\[universal-argument] \
-prefix argument instead store the name of a tag
-or branch that points at the revision, if any.  The meaning of this
-prefix argument is reversed if `groot-store-reference' is non-nil.
-
-With a single \\[negative-argument] \
-negative prefix argument store revision using the
-form \":/TEXT\", which is described in the gitrevisions(7) manpage.
-
-When more than one prefix argument is used, then `org-store-link'
-stores a link itself, without calling this function.
-
-When the region selects one or more commits, e.g. in a log, then
-store links to the Magit-Revision mode buffers for these commits."
-  (cond ((eq major-mode 'magit-revision-mode)
-         (groot-rev-store-1 magit-buffer-revision))
-        ((derived-mode-p 'magit-mode)
-         (when-let* ((revs (magit-region-values 'commit)))
-           ;; Cannot use and-let* because of debbugs#31840.
-           (mapc #'groot-rev-store-1 revs)
-           t))))
-
-(defun groot-rev-store-1 (rev)
-  (pcase-let* ((repo (groot--current-repository))
-               (`(,rev ,desc)
-                (pcase (list current-prefix-arg groot-store-reference)
-                  ((or '((4) nil) '(nil t))
-                   (if-let ((ref (or (and (magit-ref-p rev) rev)
-                                     (magit-name-tag rev)
-                                     (magit-name-branch rev))))
-                       (list ref ref)
-                     (list (magit-rev-parse rev)
-                           (magit-rev-abbrev rev))))
-                  (`(- ,_)
-                   (let ((txt (concat ":/" (magit-rev-format "%s" rev))))
-                     (list txt txt)))
-                  (_
-                   (list (magit-rev-parse rev)
-                         (magit-rev-abbrev rev))))))
+    ;;------------------------------
+    ;; Create the Link
+    ;;------------------------------
     (org-link-store-props
-     :type        "groot-rev"
-     :link        (format "groot-rev:%s::%s" repo rev)
-     :description (format-spec
-                   (magit-rev-format groot-rev-description-format rev)
-                   `((?N . ,repo)
-                     (?R . ,desc))))))
+     :type        "groot"
+     :link        (format "groot:%s:/%s"
+                          repo-name
+                          ;; Convert full path to relative/rooted path.
+                          (groot--repository-path-rooted repo-path buffer-path))
+     ;; No description for now?
+     ;; :description (format "groot:%s:/%s"
+     ;;                      repo-name
+     ;;                      (string-trim-left buffer-path repo-path))
+     )))
+;; (groot-link--store)
+
 
 ;;;###autoload
-(defun groot-rev-open (path)
-  (pcase-let* ((`(,repo ,rev) (split-string path "::"))
-               (default-directory (groot--repository-directory repo)))
-    (magit-revision-setup-buffer
-     rev (car (magit-diff-arguments 'magit-revision-mode)) nil)))
+(defun groot-link--open (link)
+  "Open a groot link.
 
-;;;###autoload
-(defun groot-rev-export (path desc format)
-  (groot-export path desc format "rev" 3))
+LINK should be in format:
+  - repo-name:/path/rooted/in/repo.ext"
+  (if-let* ((link-parts (split-string link ":/"))
+            (link-name (nth 0 link-parts))
+            (link-path (nth 1 link-parts)))
+      (let ((repo-path (groot--repository-name-to-path link-name)))
+        ;;------------------------------
+        ;; Error Checks
+        ;;------------------------------
+        (groot--name-assert "groot-link-open (link-name)" link-name :error? t)
+        (if repo-path
+            (groot--path-assert "groot-link-open (repo-path)" repo-path :error? t :dir? t)
+          (error (concat "%s: "
+                         "Don't know where repository '%s' is located! "
+                         "Add it to: %s%s%s.")
+                 "groot-link-open"
+                 link-name
+                 ;; Add it to:
+                 "`groot-repositories'"
+                 (if (boundp 'autogit:repos:path/commit)
+                     ", `autogit:repos:path/commit', `autogit:repos:path/watch'"
+                   "")
+                 ", or `magit-repository-directories'"))
 
-;;;###autoload
-(defun groot-rev-complete-link (&optional arg)
-  (let ((default-directory (magit-read-repository arg)))
-    (format "groot-rev:%s::%s"
-            (groot--current-repository)
-            (magit-read-branch-or-commit "Revision"))))
+        ;; `repo-path' is guaranteed to end in dir separator.
+        (let ((path (groot--path-normalize (concat repo-path link-path)
+                                           :file? t)))
+          (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
+          (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
 
-;;; Export
+          ;;------------------------------
+          ;; Follow Link
+          ;;------------------------------
+          (find-file-other-window path)))
 
-(defun groot-export (path desc format gitvar idx)
-  (pcase-let* ((`(,dir ,rev) (split-string path "::"))
-               (dir (groot--repository-directory dir)))
-    (if (file-exists-p dir)
-        (let* ((default-directory dir)
-               (remotes (magit-git-lines "remote"))
-               (remote  (magit-get "groot.remote"))
-               (remote  (cond ((length= remotes 1) (car remotes))
-                              ((member remote remotes) remote)
-                              ((member groot-remote remotes) groot-remote))))
-          (if remote
-              (if-let ((link
-                        (or (and-let* ((url (magit-get "groot" gitvar)))
-                              (format-spec url `((?r . ,rev))))
-                            (and-let* ((url (magit-get "remote" remote "url"))
-                                       (format (cl-find-if
-                                                (lambda (elt)
-                                                  (string-match (car elt) url))
-                                                groot-export-alist)))
-                              (format-spec (nth idx format)
-                                           `((?n . ,(match-string 1 url))
-                                             (?r . ,rev)))))))
-                  (groot--format-export link desc format)
-                (signal 'org-link-broken
-                        (list (format "Cannot determine public url for %s"
-                                      path))))
-            (signal 'org-link-broken
-                    (list (format "Cannot determine public remote for %s"
-                                  default-directory)))))
-      (signal 'org-link-broken
-              (list (format "Cannot determine public url for %s %s"
-                            path "(which itself does not exist)"))))))
+    ;;------------------------------
+    ;; ERROR: Bad LINK
+    ;;------------------------------
+    (error (concat "%s: "
+                   "Invalid `groot' link: \"groot:%s\"! "
+                   "Expected format of: \"repo-name:/relative/path/to/file.ext\". "
+                   "Got repo-name: %S, path: %S")
+           "groot-link-open"
+           link
+           link-name
+           link-path)))
+;; groot-repositories
+;; (push (cons "groot" (groot--repository-current-path :error? t)) groot-repositories)
 
-(defun groot--format-export (link desc format)
-  (pcase format
-    ('html  (format "<a href=\"%s\">%s</a>" link desc))
-    ('latex (format "\\href{%s}{%s}" link desc))
-    ('ascii link)
-    (_      link)))
 
-;;; Utilities
+;;------------------------------
+;; TODO: More org link functionality!
+;;------------------------------
 
-(defun groot--current-repository ()
-  (or (and groot-store-repository-id
-           (car (rassoc default-directory (magit-repos-alist))))
-      (abbreviate-file-name default-directory)))
+;; ;;;###autoload
+;; (defun groot-link--export (path desc format)
+;;   (groot-export path desc format "status" 1))
 
-(defun groot--repository-directory (repo)
-  (let ((dir (or (cdr (assoc repo (magit-repos-alist)))
-                 (file-name-as-directory (expand-file-name repo)))))
-    (cond ((file-exists-p dir) dir)
-          ((string-match-p "\\`[./]" repo)
-           (error "Cannot open link; %S does not exist" dir))
-          (t
-           (error "Cannot open link; no entry for %S in `%s'"
-                  repo 'magit-repository-directories)))))
 
-;;; _
+;; ;;;###autoload
+;; (defun groot-link--complete-link (&optional arg)
+;;   (let ((default-directory (magit-read-repository arg)))
+;;     (concat "groot:" (groot--repository-current-path))))
+
+
+;; ;;; Export
+;;
+;; (defun groot-export (path desc format gitvar idx)
+;;   (pcase-let* ((`(,dir ,rev) (split-string path "::"))
+;;                (dir (groot--repository-name-to-path dir)))
+;;     (if (file-exists-p dir)
+;;         (let* ((default-directory dir)
+;;                (remotes (magit-git-lines "remote"))
+;;                (remote  (magit-get "groot.remote"))
+;;                (remote  (cond ((length= remotes 1) (car remotes))
+;;                               ((member remote remotes) remote)
+;;                               ((member groot-remote remotes) groot-remote))))
+;;           (if remote
+;;               (if-let ((link
+;;                         (or (and-let* ((url (magit-get "groot" gitvar)))
+;;                               (format-spec url `((?r . ,rev))))
+;;                             (and-let* ((url (magit-get "remote" remote "url"))
+;;                                        (format (cl-find-if
+;;                                                 (lambda (elt)
+;;                                                   (string-match (car elt) url))
+;;                                                 groot-export-alist)))
+;;                               (format-spec (nth idx format)
+;;                                            `((?n . ,(match-string 1 url))
+;;                                              (?r . ,rev)))))))
+;;                   (groot--format-export link desc format)
+;;                 (signal 'org-link-broken
+;;                         (list (format "Cannot determine public url for %s"
+;;                                       path))))
+;;             (signal 'org-link-broken
+;;                     (list (format "Cannot determine public remote for %s"
+;;                                   default-directory)))))
+;;       (signal 'org-link-broken
+;;               (list (format "Cannot determine public url for %s %s"
+;;                             path "(which itself does not exist)"))))))
+;;
+;; (defun groot--format-export (link desc format)
+;;   (pcase format
+;;     ('html  (format "<a href=\"%s\">%s</a>" link desc))
+;;     ('latex (format "\\href{%s}{%s}" link desc))
+;;     ('ascii link)
+;;     (_      link)))
+
+
+;;--------------------------------------------------------------------------------
+;; Commands
+;;--------------------------------------------------------------------------------
+
+;; NOTE: ...org doesn't make this easy... See function `org-store-link'.
+;; TL;DR: Big fucking mess of a function. No interface for others to do
+;; anything like what I wanted to do here?!
+;; So... Oh well?
+;; Just use `org-store-link', you pleb?
+;;
+;; ;;;###autoload
+;; (defun groot-store-link (_prefix)
+;;   "Store an org link of type 'groot'.
+;;
+;; Like `org-store-link' but specific to 'groot'. In case you don't want 'groot'
+;; taking over all Git repo links?"
+;;   (interactive "P")
+;;   (groot-link--store))
+
+
+
+;;--------------------------------------------------------------------------------
+;; The End.
+;;--------------------------------------------------------------------------------
 (provide 'groot)
 ;; Local Variables:
 ;; indent-tabs-mode: nil
