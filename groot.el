@@ -567,7 +567,11 @@ Return absolute filepath."
                            ;; TODO: More org link functionality!
                            ;; :export   #'groot-link--export
                            ;; :complete #'groot-link--complete-link
-                           ))
+                           )
+
+  ;; NOTE: Unregister like so:
+  ;;   (org-link-set-parameters "groot" :store nil :follow nil :export nil :complete nil)
+  )
 
 
 ;;;###autoload
