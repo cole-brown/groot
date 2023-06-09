@@ -113,6 +113,24 @@ Each element has the form (NAME . PATH)
   :type '(alist :key-type string :value-type directory))
 
 
+(defcustom groot-ignore-major-modes '(org-mode)
+  "List of major mode symbols we should _not_ take responsibility for org links.
+This allows other org link types to make the link instead."
+  :group 'groot
+  :type '(repeat symbol))
+
+
+(defcustom groot-ignore-predicates nil
+  "List of predicates for whether to _not_ take responsibility an org link.
+This allows other org link types to make the link instead.
+
+Predicates take a buffer-object and return non-nil for \"ignore this buffer\".
+
+See `groot-link--store?' for default ignores."
+  :group 'groot
+  :type '(repeat function))
+
+
 ;; TODO: export functionality!
 ;; (defcustom groot-export-alist
 ;;   `(("github.com[:/]\\(.+?\\)\\(?:\\.git\\)?$"
@@ -561,6 +579,9 @@ Return absolute filepath."
 (with-eval-after-load 'org
   ;; Do we need to wait for magit, or not? Assume not until proven so.
   ;; (with-eval-after-load 'magit
+
+  ;; NOTE: See docstring for `org-link-parameters' for details of what
+  ;; `org-link-set-parameters' takes as kwargs.
   (org-link-set-parameters "groot"
                            :store    #'groot-link--store
                            :follow   #'groot-link--open
@@ -574,6 +595,43 @@ Return absolute filepath."
   )
 
 
+(defun groot-link--store? (buffer)
+  "Should `groot' be the link type to store this org link?
+
+Annoyingly, we can't have a low priority of any sort, and,
+actually, being added via `org-link-set-parameters' makes it the
+highest priority until something else is added. So instead look
+at major modes and stuff and quit early if we thing someone else
+can do a better job of this.
+
+BUFFER should be the buffer that org is asking for a link to."
+  (cond
+   ;;------------------------------
+   ;; Do Not Store Link!
+   ;;------------------------------
+   ;; Check for disallowed major-mode - e.g. `org-mode' we currently want the
+   ;; normal 'file:' link handler to do its thing with the current headline.
+   ((memq major-mode groot-ignore-major-modes)
+    nil)
+
+   ;; Check with any predicates.
+   (groot-ignore-predicates
+    (let ((predicates groot-ignore-predicates)
+          ignore?)
+      (while (and (not ignore?)
+                  predicates)
+        (setq ignore? (funcall (pop predicates) buffer)))
+      ignore?))
+
+   ;;------------------------------
+   ;; ...Maybe Store Link?
+   ;;------------------------------
+   ;; Otherwise, make an attempt to store this link. Can still fail if
+   ;; `groot-link--store' returns nil for whatever reason.
+   (t)))
+;; (groot-link--store? (current-buffer))
+
+
 ;;;###autoload
 (defun groot-link--store ()
   "Store a link to a file in a Git repository.
@@ -581,31 +639,35 @@ Return absolute filepath."
 Link will be in format:
   - groot:repo-name:/path/rooted/in/repo.ext"
   ;;------------------------------
-  ;; Sanity Checks
+  ;; Should We Make This Link?
   ;;------------------------------
-  (let ((repo-path (groot--repository-current-path :error? t))
-        (repo-name (groot--repository-current-name :error? t))
-        (buffer-path (groot--path-normalize (buffer-file-name (buffer-base-buffer))
-                                            :file? t)))
-    (groot--path-assert "groot-link-store"
-                        buffer-path
-                        :error? t
-                        :dir? nil)
+  (when (groot-link--store? (current-buffer))
+    ;;------------------------------
+    ;; Sanity Checks
+    ;;------------------------------
+    (let ((repo-path (groot--repository-current-path :error? t))
+          (repo-name (groot--repository-current-name :error? t))
+          (buffer-path (groot--path-normalize (buffer-file-name (buffer-base-buffer))
+                                              :file? t)))
+      (groot--path-assert "groot-link-store"
+                          buffer-path
+                          :error? t
+                          :dir? nil)
 
-    ;;------------------------------
-    ;; Create the Link
-    ;;------------------------------
-    (org-link-store-props
-     :type        "groot"
-     :link        (format "groot:%s:/%s"
-                          repo-name
-                          ;; Convert full path to relative/rooted path.
-                          (groot--repository-path-rooted repo-path buffer-path))
-     ;; No description for now?
-     ;; :description (format "groot:%s:/%s"
-     ;;                      repo-name
-     ;;                      (string-trim-left buffer-path repo-path))
-     )))
+      ;;------------------------------
+      ;; Create the Link
+      ;;------------------------------
+      (org-link-store-props
+       :type        "groot"
+       :link        (format "groot:%s:/%s"
+                            repo-name
+                            ;; Convert full path to relative/rooted path.
+                            (groot--repository-path-rooted repo-path buffer-path))
+       ;; No description for now?
+       ;; :description (format "groot:%s:/%s"
+       ;;                      repo-name
+       ;;                      (string-trim-left buffer-path repo-path))
+       ))))
 ;; (groot-link--store)
 
 
