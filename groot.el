@@ -110,7 +110,17 @@
 
 Each element has the form (NAME . PATH)
   - NAME: string - repository's name (usually the same as the repo dir name)
-  - PATH: string - absolute path to the repo's root directory"
+  - PATH: string - absolute path to the repo's root directory
+
+NOTE: `groot-path-repositories' is a helpful function that will find all Git
+repos directly under a dir. However, it cannot be used in `use-package'
+`:custom' section, so you'd have to wait for the `:config':
+  (use-package groot
+     ...
+     :config
+     (customize-set-variable 'groot-repositories
+                             (list (groot-path-repositories \"~/.config\")
+                                   (groot-path-repositories \"~/repos\")))"
   :group 'groot
   :type '(alist :key-type string :value-type directory))
 
@@ -791,13 +801,19 @@ LINK should be in format:
 
 ;;;###autoload
 (defun groot-path-in-repository? (path)
-  "Return non-nil if PATH is or is in git repository."
+  "Return non-nil if PATH is or is in git repository.
+
+NOTE: If you use the non-nil return as a path, it is NOT normalized!"
   ;; 1. PATH must exist.
-  (and (file-exists-p path)
-       ;; 2. PATH must be in a git repository.
-       (magit-toplevel path)))
+  (when-let* ((_ (file-exists-p path))
+              ;; 2. PATH must be in a git repository.
+              (root (magit-toplevel path))
+              ;; 3. Top-level must be ancestor of PATH.
+              )
+    ))
 ;; (groot-repository-contains-path? (buffer-file-name))
 ;; (groot-repository-contains-path? (path:parent (buffer-file-name)))
+;; (groot-path-repositories "~/.config/emacs-sn004/packages/user")
 
 
 (defconst groot--path-rx-filename-ignore
@@ -897,6 +913,70 @@ NOTE: These should be compiled regex strings.")
       ;;------------------------------
       child-dirs)))
 ;; (groot--path-children (path:parent buffer-file-name))
+;; (groot-path-repositories "~/.config/emacs-sn004/packages/user")
+
+
+(defun groot--path-parent (path)
+  "Return the parent directory of PATH.
+
+Special Cases:
+  1. If PATH is the root of the file system, return the root.
+     (groot--path-parent \"/\")
+       -> \"/\"
+  2. If PATH is the top level of a relative path (e.g. \"this-dir\"), return
+     empty string.
+     (groot--path-parent \"this-dir\")
+       -> \"\""
+  (directory-file-name
+   ;; `file-name-directory' returns nil for parent of top-level relative path:
+   ;;   (file-name-directory "relative")
+   ;;     -> nil
+   ;; Avoid that; use empty string instead of nil.
+   (or (file-name-directory
+        ;; But first make sure PATH doesn't have a trailing slash.
+        ;; Otherwise all we do is strip the slash.
+        ;; Example: "/path/to/foo/" should have a parent of:
+        ;; "/path/to" aka "/path/to/", not "/path/to/foo".
+        (directory-file-name path))
+       "")))
+;; (groot--path-parent "/path/to/foo")
+;; (groot--path-parent "/path/to/foo/")
+;; Special Cases:
+;; (groot--path-parent "/")
+;; (groot--path-parent "relative-path")
+
+
+(defun groot--path-child? (child parent)
+  "Return non-nil if CHILD path is a direct child of PARENT path.
+
+CHILD and PARENT cannot be the same path.
+
+NOTE: CHILD and PARENT are normalized before comparing."
+  (let ((child (groot--path-normalize child :file? t))
+        (parent (groot--path-normalize parent :file? t)))
+    (unless (string= child parent) ;; "/" is not a child of itself.
+      (string= (groot--path-parent child)
+               parent))))
+;; (groot--path-child? "/path/to/foo/file.txt" "/path/to/foo")
+;; (groot--path-child? "/path/to/foo/" "/path/to/foo/child/")
+
+
+(defun groot--path-descendant? (descendant ancestor)
+  "Return non-nil if DESCENDANT path is a descendant of ANCESTOR path.
+
+DESCENDANT and ANCESTOR must be strings.
+DESCENDANT and ANCESTOR cannot be the same path.
+
+Will normalize the paths before comparing."
+  (let ((descendant (groot--path-normalize descendant))
+        (ancestor (groot--path-normalize ancestor)))
+    (unless (string= descendant ancestor)
+      (string-prefix-p ancestor
+                       descendant))))
+;; Yes:
+;; (groot--path-descendant? "/foo/bar" "/foo")
+;; No:
+;; (groot--path-descendant? "/path/to/foo/" "/path/to/foo/child")
 
 
 ;;;###autoload
@@ -923,20 +1003,32 @@ Return list of absolute paths or nil."
   ;;------------------------------
   ;; Find Git Repos.
   ;;------------------------------
-  ;; Is the path itself a repo?
-  (if (groot-path-in-repository? path)
-      ;; Yes; return the root of the repo.
-      (list (groot--repository-path-normalize path))
-    ;; Nope; check its direct children.
-    (let (repos)
-      (dolist (path-child (groot--path-children path))
-        (when (groot-path-in-repository? path-child)
-          (push path-child repos)))
-      ;; Return absolute paths to any repos found.
-      repos)))
+  (let (repos)
+    ;;---
+    ;; First: Does the supplied directory contain repositories?
+    ;;---
+    ;; Check this first so we can actually find repos inside of other repos.
+    (dolist (path-child (groot--path-children path))
+      ;; Now... _What_ repo is this? Could have parent paths in this list if
+      ;; we're inside a repo looking for other repos (e.g. in a git ignored
+      ;; dir that contains `straight' package repos).
+      (when (and (groot-path-in-repository? path-child) ; inside of some repo
+                 (groot--path-descendant? (groot--repository-path-normalize path-child)
+                                          path)) ; under the original path
+        (push (groot--repository-path-normalize path-child) repos)))
+
+    ;; If child repos were found, return the list of absolute paths to said repos.
+    (cond (repos)
+          ;;---
+          ;; Second: Is the path itself (in) a repo?
+          ;;---
+          ;; If no children repos, check the path itself.
+          ((groot-path-in-repository? path)
+           ;; Yes; return the root of the repo.
+           (list (groot--repository-path-normalize path))))))
 ;; (groot-path-repositories "~/.config")
 ;; (groot-path-repositories "~/")
-
+;; (groot-path-repositories "~/.config/emacs-sn004/packages/user")
 
 ;;--------------------------------------------------------------------------------
 ;; Commands
