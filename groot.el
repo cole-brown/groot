@@ -10,7 +10,9 @@
 ;; TODO:pkg: Add back in.
 ;; TODO:pkg: TODO-Package-Version: 1.9.0
 ;; TODO:pkg: TODO-Package-Requires: (
-;;     (emacs "25.1")
+;;     TODO:pkg: What version of emacs does this actually require?
+;;     (emacs "28.1")
+;;     TODO:pkg: Does it really need these and what version?
 ;;     (compat "29.1.4.1")
 ;;     (magit "3.3.0")
 ;;     (org "9.6.5"))
@@ -572,7 +574,7 @@ Return absolute filepath."
 
 
 ;;--------------------------------------------------------------------------------
-;; Git-Rooted Paths
+;; Org Link API
 ;;--------------------------------------------------------------------------------
 
 ;;;###autoload
@@ -784,6 +786,159 @@ LINK should be in format:
 
 
 ;;--------------------------------------------------------------------------------
+;; Config API
+;;--------------------------------------------------------------------------------
+
+;;;###autoload
+(defun groot-path-in-repository? (path)
+  "Return non-nil if PATH is or is in git repository."
+  ;; 1. PATH must exist.
+  (and (file-exists-p path)
+       ;; 2. PATH must be in a git repository.
+       (magit-toplevel path)))
+;; (groot-repository-contains-path? (buffer-file-name))
+;; (groot-repository-contains-path? (path:parent (buffer-file-name)))
+
+
+(defconst groot--path-rx-filename-ignore
+  (list
+   ;; Ignore "." and ".." entries.
+   (rx-to-string '(sequence
+                   string-start
+                   (repeat 1 2 ".")
+                   string-end)
+                 :no-group))
+  "What to ignore when traversing paths, getting children, etc..
+
+NOTE: These should be compiled regex strings.")
+
+
+(defun groot--path-ignore? (path regexes)
+  "Return non-nil if PATH matches any of the REGEXES."
+  (let ((func-name "groot--path-ignore?")
+        (regex-list regexes) ;; Shallow copy so we can pop without possibly changing caller's list.
+        ignore?)
+    (unless (stringp path)
+      (error "%s: PATH must be a string! Got: %S"
+             func-name
+             path))
+    (unless (listp regexes)
+      (error "%s: REGEXES must be a list of regex strings! Got: %S"
+             func-name
+             regexes))
+
+    (while (and (not ignore?)
+                regex-list)
+      (let ((regex (pop regex-list)))
+        (unless (stringp regex)
+          (error "%s: Regex must be a string! Got %s: %S"
+                 func-name
+                 (type-of regex)
+                 regex))
+
+        (when (string-match regex path)
+          ;; Set our return & stop-looping-early value.
+          (setq ignore? t))))
+
+    ignore?))
+;; (groot--path-ignore? "x.y" groot--path-rx-filename-ignore)
+;; (groot--path-ignore? "." groot--path-rx-filename-ignore)
+;; (groot--path-ignore? ".." groot--path-rx-filename-ignore)
+;; (groot--path-ignore? "..." groot--path-rx-filename-ignore)
+
+
+(defun groot--path-children (parent-path)
+  "Return immediate children directories of PARENT-PATH directory."
+  (when (and (stringp parent-path)
+             (file-directory-p parent-path))
+    (let (child-dirs
+          ;; Guarentee ourselves a dirpath.
+          (parent-path (groot--path-normalize parent-path)))
+      ;; Find all children files...
+      (dolist (child (directory-files-and-attributes parent-path))
+        (let* ((child-name  (car child))
+               (child-path  (concat parent-path child-name))
+               (child-attrs (cdr child)))
+          ;;------------------------------
+          ;; Save / Ignore Child
+          ;;------------------------------
+          ;; Explicitly ignore?
+          (cond ((groot--path-ignore? child-name groot--path-rx-filename-ignore)
+                 nil)
+
+                ;;---
+                ;; Save / Ignore by Type
+                ;;---
+                ;; We only care about directories, so check the attributes and ignore everything else.
+                ((eq (file-attribute-type child-attrs) t) ; t is the attr type for directories.
+                 ;; Save to results list.
+                 (push child-path child-dirs))
+
+                ((eq (file-attribute-type child-attrs) nil) ; nil is the attr type for files.
+                 ;; Just ignore.
+                 nil)
+
+                ((stringp (file-attribute-type child-attrs)) ; The attr type for symlinks is a string of the path they point to.
+                 ;; Just ignore.
+                 nil)
+
+                ;;---
+                ;; Error: How did you get here?
+                ;;---
+                ;; ...are there any other attr types? There are other file types, like sockets.
+                (t
+                 (error "%s: '%s': Unhandled file-attribute-type: %S"
+                        "groot--path-children"
+                        child-path
+                        (file-attribute-type child-attrs))))))
+
+      ;;------------------------------
+      ;; Done
+      ;;------------------------------
+      child-dirs)))
+;; (groot--path-children (path:parent buffer-file-name))
+
+
+;;;###autoload
+(defun groot-path-repositories (path)
+  "Get all git repositories that are direct children of PATH.
+
+Return list of absolute paths or nil."
+  ;;------------------------------
+  ;; Error Checking & Normalization
+  ;;------------------------------
+  (unless (stringp path)
+    (error "groot-path-repositories: PATH must be a string! Got: %S"
+           path))
+
+  (setq path (groot--path-normalize path :file? t))
+
+  (unless (file-exists-p path)
+    (error "groot-path-repositories: PATH does not exist! %s"
+           path))
+  (unless (file-directory-p path)
+    (error "groot-path-repositories: PATH is not a directory! %s"
+           path))
+
+  ;;------------------------------
+  ;; Find Git Repos.
+  ;;------------------------------
+  ;; Is the path itself a repo?
+  (if (groot-path-in-repository? path)
+      ;; Yes; return the root of the repo.
+      (list (groot--repository-path-normalize path))
+    ;; Nope; check its direct children.
+    (let (repos)
+      (dolist (path-child (groot--path-children path))
+        (when (groot-path-in-repository? path-child)
+          (push path-child repos)))
+      ;; Return absolute paths to any repos found.
+      repos)))
+;; (groot-path-repositories "~/.config")
+;; (groot-path-repositories "~/")
+
+
+;;--------------------------------------------------------------------------------
 ;; Commands
 ;;--------------------------------------------------------------------------------
 
@@ -801,6 +956,7 @@ LINK should be in format:
 ;; taking over all Git repo links?"
 ;;   (interactive "P")
 ;;   (groot-link--store))
+
 
 
 
