@@ -208,6 +208,22 @@ See `groot-link--store?' for default ignores."
 
 
 ;;--------------------------------------------------------------------------------
+;; Variables
+;;--------------------------------------------------------------------------------
+
+(defvar groot--org-api-warn-on-error nil
+  "Should errors during `org' API usage be noted?
+
+`groot' eats all errors in the `org-link-parameters' API functions (e.g.
+`groot-link--store') as otherwise it breaks e.g. `org-store-link', and not just
+for the groot links. It will not eat the errors when `debug-on-error' is true.
+
+This setting is for whether to `message' information about consumed errors.
+
+Probably don't need to enable this. Mainly for the dev.")
+
+
+;;--------------------------------------------------------------------------------
 ;; Validation
 ;;--------------------------------------------------------------------------------
 
@@ -535,7 +551,14 @@ Return absolute directory (ends in dir separator) path."
         nil
 
       ;; Figure out repo's root path.
-      (groot--repository-path-normalize path))))
+      (let ((repo (groot--repository-path-normalize path)))
+        ;; ...Are we _actually in a repo?
+        (if (and (not repo)
+                 error?)
+            (error "groot--repository-current-path: Not currently in a repository! Current Path: %S"
+                   path)
+          ;; path is either in a repo or nil (and they didn't want an error), so return.
+          path)))))
 ;; (groot--repository-current-path)
 ;; (let (default-directory) (groot--repository-current-path))
 ;; (let (default-directory) (groot--repository-current-path :error? t))
@@ -650,36 +673,50 @@ BUFFER should be the buffer that org is asking for a link to."
 
 Link will be in format:
   - groot:repo-name:/path/rooted/in/repo.ext"
-  ;;------------------------------
-  ;; Should We Make This Link?
-  ;;------------------------------
-  (when (groot-link--store? (current-buffer))
-    ;;------------------------------
-    ;; Sanity Checks
-    ;;------------------------------
-    (let ((repo-path (groot--repository-current-path :error? t))
-          (repo-name (groot--repository-current-name :error? t))
-          (buffer-path (groot--path-normalize (buffer-file-name (buffer-base-buffer))
-                                              :file? t)))
-      (groot--path-assert "groot-link-store"
-                          buffer-path
-                          :error? t
-                          :dir? nil)
+  ;; Eat errors and return nil so users don't get their `org-store-link' broken.
+  ;; Do not eat errors when `debug-on-error' is true.
+  (condition-case-unless-debug error
+      ;;------------------------------
+      ;; Should We Make This Link?
+      ;;------------------------------
+      (when (groot-link--store? (current-buffer))
+        ;;------------------------------
+        ;; Sanity Checks
+        ;;------------------------------
+        (let ((repo-path (groot--repository-current-path :error? t))
+              (repo-name (groot--repository-current-name :error? t))
+              (buffer-path (groot--path-normalize (buffer-file-name (buffer-base-buffer))
+                                                  :file? t)))
+          (groot--path-assert "groot-link-store"
+                              buffer-path
+                              :error? t
+                              :dir? nil)
 
-      ;;------------------------------
-      ;; Create the Link
-      ;;------------------------------
-      (org-link-store-props
-       :type        "groot"
-       :link        (format "groot:%s:/%s"
-                            repo-name
-                            ;; Convert full path to relative/rooted path.
-                            (groot--repository-path-rooted repo-path buffer-path))
-       ;; No description for now?
-       ;; :description (format "groot:%s:/%s"
-       ;;                      repo-name
-       ;;                      (string-trim-left buffer-path repo-path))
-       ))))
+          ;;------------------------------
+          ;; Create the Link
+          ;;------------------------------
+          (org-link-store-props
+           :type        "groot"
+           :link        (format "groot:%s:/%s"
+                                repo-name
+                                ;; Convert full path to relative/rooted path.
+                                (groot--repository-path-rooted repo-path buffer-path))
+           ;; No description for now?
+           ;; :description (format "groot:%s:/%s"
+           ;;                      repo-name
+           ;;                      (string-trim-left buffer-path repo-path))
+           )))
+
+    ;;------------------------------
+    ;; Error Handling
+    ;;------------------------------
+    ;; If `debug-on-error' is enabled, errors will happen as usual.
+    ;; Otherwise, downgrade to warning or just quietly return nil.
+    (error (if groot--org-api-warn-on-error
+               (warn "[ERROR] groot-link--store: caught error '%S': %s"
+                     (car error)
+                     (error-message-string error))
+             nil))))
 ;; (groot-link--store)
 
 
@@ -689,50 +726,64 @@ Link will be in format:
 
 LINK should be in format:
   - repo-name:/path/rooted/in/repo.ext"
-  (if-let* ((link-parts (split-string link ":/"))
-            (link-name (nth 0 link-parts))
-            (link-path (nth 1 link-parts)))
-      (let ((repo-path (groot--repository-name-to-path link-name)))
-        ;;------------------------------
-        ;; Error Checks
-        ;;------------------------------
-        (groot--name-assert "groot-link-open (link-name)" link-name :error? t)
-        (if repo-path
-            (groot--path-assert "groot-link-open (repo-path)" repo-path :error? t :dir? t)
-          (error (concat "%s: "
-                         "Don't know where repository '%s' is located! "
-                         "Add it to: %s%s%s.")
-                 "groot-link-open"
-                 link-name
-                 ;; Add it to:
-                 "`groot-repositories'"
-                 (if (boundp 'autogit:repos:path/commit)
-                     ", `autogit:repos:path/commit', `autogit:repos:path/watch'"
-                   "")
-                 ", or `magit-repository-directories'"))
+  ;; Eat errors and return nil so users don't get their `org-store-link' broken.
+  ;; Do not eat errors when `debug-on-error' is true.
+  (condition-case-unless-debug error
+      (if-let* ((link-parts (split-string link ":/"))
+                (link-name (nth 0 link-parts))
+                (link-path (nth 1 link-parts)))
+          (let ((repo-path (groot--repository-name-to-path link-name)))
+            ;;------------------------------
+            ;; Error Checks
+            ;;------------------------------
+            (groot--name-assert "groot-link-open (link-name)" link-name :error? t)
+            (if repo-path
+                (groot--path-assert "groot-link-open (repo-path)" repo-path :error? t :dir? t)
+              (error (concat "%s: "
+                             "Don't know where repository '%s' is located! "
+                             "Add it to: %s%s%s.")
+                     "groot-link-open"
+                     link-name
+                     ;; Add it to:
+                     "`groot-repositories'"
+                     (if (boundp 'autogit:repos:path/commit)
+                         ", `autogit:repos:path/commit', `autogit:repos:path/watch'"
+                       "")
+                     ", or `magit-repository-directories'"))
 
-        ;; `repo-path' is guaranteed to end in dir separator.
-        (let ((path (groot--path-normalize (concat repo-path link-path)
-                                           :file? t)))
-          (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
-          (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
+            ;; `repo-path' is guaranteed to end in dir separator.
+            (let ((path (groot--path-normalize (concat repo-path link-path)
+                                               :file? t)))
+              (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
+              (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
 
-          ;;------------------------------
-          ;; Follow Link
-          ;;------------------------------
-          (find-file-other-window path)))
+              ;;------------------------------
+              ;; Follow Link
+              ;;------------------------------
+              (find-file-other-window path)))
+
+        ;;------------------------------
+        ;; ERROR: Bad LINK
+        ;;------------------------------
+        (error (concat "%s: "
+                       "Invalid `groot' link: \"groot:%s\"! "
+                       "Expected format of: \"repo-name:/relative/path/to/file.ext\". "
+                       "Got repo-name: %S, path: %S")
+               "groot-link-open"
+               link
+               link-name
+               link-path))
 
     ;;------------------------------
-    ;; ERROR: Bad LINK
+    ;; Error Handling
     ;;------------------------------
-    (error (concat "%s: "
-                   "Invalid `groot' link: \"groot:%s\"! "
-                   "Expected format of: \"repo-name:/relative/path/to/file.ext\". "
-                   "Got repo-name: %S, path: %S")
-           "groot-link-open"
-           link
-           link-name
-           link-path)))
+    ;; If `debug-on-error' is enabled, errors will happen as usual.
+    ;; Otherwise, downgrade to warning or just quietly return nil.
+    (error (if groot--org-api-warn-on-error
+               (warn "[ERROR] groot-link--open: caught error '%S': %s"
+                     (car error)
+                     (error-message-string error))
+             nil))))
 ;; groot-repositories
 ;; (push (cons "groot" (groot--repository-current-path :error? t)) groot-repositories)
 
