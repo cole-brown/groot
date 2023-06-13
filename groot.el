@@ -127,7 +127,10 @@ repos directly under a dir. However, it cannot be used in `use-package'
 
 (defcustom groot-ignore-major-modes '(org-mode)
   "List of major mode symbols we should _not_ take responsibility for org links.
-This allows other org link types to make the link instead."
+This allows other org link types to make the link instead.
+
+NOTE: `major-mode' is compared using `derived-mode-p', so these and all derived
+modes are ignored."
   :group 'groot
   :type '(repeat symbol))
 
@@ -646,7 +649,7 @@ BUFFER should be the buffer that org is asking for a link to."
    ;;------------------------------
    ;; Check for disallowed major-mode - e.g. `org-mode' we currently want the
    ;; normal 'file:' link handler to do its thing with the current headline.
-   ((memq major-mode groot-ignore-major-modes)
+   ((apply #'derived-mode-p groot-ignore-major-modes)
     nil)
 
    ;; Check with any predicates.
@@ -665,6 +668,63 @@ BUFFER should be the buffer that org is asking for a link to."
    ;; `groot-link--store' returns nil for whatever reason.
    (t)))
 ;; (groot-link--store? (current-buffer))
+
+
+;; TODO: option for this type of location versus others (e.g. revision, line, column)
+(defun groot-link--store--file-location ()
+  "Get a file location string for `groot-link--store'.
+
+Like 'file'-type links: `file:<path>::<location-string>'
+
+Expect point/region in `current-buffer' to be the desired location.
+
+Return a string or nil."
+  ;;------------------------------
+  ;; `org-create-file-search-functions'?
+  ;;------------------------------
+  ;; If a hook func succeeds, just return what it returns.
+  (cond ((and org-create-file-search-functions
+              (run-hook-with-args-until-success 'org-create-file-search-functions)))
+
+        ;;------------------------------
+        ;; `org-mode' file?
+        ;;------------------------------
+        ;; Wish I could just call the function org uses, but it's all stuffed
+        ;; into the top-level, interactive mega-function `org-store-link'...
+        ;; So for now, just assume we don't get `org-mode' files?
+        ;; If we start working in `org-mode', see for all the shenanigans necessary:
+        ;;   [[file:/usr/share/emacs/28.1/lisp/org/ol.el.gz::and (buffer-file-name (buffer-base-buffer)) (derived-mode-p 'org-mode]]
+        ((and (buffer-file-name (buffer-base-buffer))
+              (derived-mode-p 'org-mode))
+         (error "%s: Major mode '%S' is not supported due to being (derived from) '%S'!"
+                "groot-link--store--file-location"
+                major-mode
+                (derived-mode-p 'org-mode)))
+
+        ;;------------------------------
+        ;; Context Search String
+        ;;------------------------------
+        ((buffer-file-name (buffer-base-buffer))
+         ;; Obey `org-store-link' expectations: `org-link-context-for-files'
+         ;; is the setting and a prefix arg can negate it.
+         (when (org-xor org-link-context-for-files
+                        (equal current-prefix-arg '(4)))
+           ;; NOTE: Entire region should be stored if region is active. See `org-link-context-for-files'.
+           (let ((context (org-link--normalize-string (or (org-link--context-from-region)
+                                                          (org-current-line-string))
+                                                      t)))
+             ;; Did we get anything?
+             ;; `org-string-nw-p' is a terrible name.
+             ;; Think `org-string-not-null-or-whitespace-p'.
+             (when (org-string-nw-p context)
+               ;; Ok; return context string.
+               context))))
+
+        ;;------------------------------
+        ;; Fallback
+        ;;------------------------------
+        (t
+         nil)))
 
 
 ;;;###autoload
@@ -695,17 +755,28 @@ Link will be in format:
           ;;------------------------------
           ;; Create the Link
           ;;------------------------------
-          (org-link-store-props
-           :type        "groot"
-           :link        (format "groot:%s:/%s"
-                                repo-name
-                                ;; Convert full path to relative/rooted path.
-                                (groot--repository-path-rooted repo-path buffer-path))
-           ;; No description for now?
-           ;; :description (format "groot:%s:/%s"
-           ;;                      repo-name
-           ;;                      (string-trim-left buffer-path repo-path))
-           )))
+          ;; Convert full path to relative/rooted path.
+          (let ((link-path (groot--repository-path-rooted repo-path buffer-path)))
+            (if-let ((link-location (groot-link--store--file-location)))
+                (org-link-store-props :type "groot"
+                                      :link (format "groot:%s:/%s::%s"
+                                                    repo-name
+                                                    link-path
+                                                    link-location)
+                                      ;; No description for now?
+                                      ;; :description (format "%s:/%s"
+                                      ;;                      repo-name
+                                      ;;                      (string-trim-left buffer-path repo-path))
+                                      )
+              (org-link-store-props :type "groot"
+                                    :link (format "groot:%s:/%s"
+                                                  repo-name
+                                                  link-path))
+              ;; No description for now?
+              ;; :description (format "%s:/%s"
+              ;;                      repo-name
+              ;;                      (string-trim-left buffer-path repo-path))
+              ))))
 
     ;;------------------------------
     ;; Error Handling
@@ -720,30 +791,123 @@ Link will be in format:
 ;; (groot-link--store)
 
 
+(defconst groot-link--regex
+  (rx-to-string `(sequence
+                  string-start
+                  ;;---
+                  ;; Repo Name (Dir/Filename, basically?)
+                  ;;---
+                  (group
+                   (one-or-more
+                    (not (any ":"      ; No colon (we need to be a field separator)
+                              "\t\r\n" ; No whitespace (except space is fine)
+                              ?\\      ; No literal backslash
+                              ?/       ; No literal forward slash
+                              ?\"      ; No literal double quote
+                              ;; No... various other symbols.
+                              ;; NOTE: Had bad luck with the regex when these were just in one string?!
+                              ;; It wouldn't match e.g. "repo.name" which means period was sneaking in somewhere...
+                              ;; That was back when a hyphen was also in here though...
+                              "{}" "<>" "#" "%" "&" "*" "?" "$" "!" "@" "`" "|" "="))))
+                  ;;---
+                  ;; Repo/Path seperator token
+                  ;;---
+                  ":/"
+                  ;;---
+                  ;; Path
+                  ;;---
+                  (group
+                   (one-or-more
+                    ;; Similar to repo name, but must allow slash (*nix & windows) and backslash (windows).
+                    (not (any ":"      ; No colon (we need to be a field separator)
+                              "\t\r\n" ; No whitespace (except space is fine)
+                              ?\"      ; No literal double quote
+                              ;; No... various other symbols.
+                              ;; NOTE: Had bad luck with the regex when these were just in one string?!
+                              ;; It wouldn't match e.g. "repo.name" which means period was sneaking in somewhere...
+                              ;; That was back when a hyphen was also in here though...
+                              "{}" "<>" "#" "%" "&" "*" "?" "$" "!" "@" "`" "|" "="))))
+                  ;;---
+                  ;; Optional: Path/Location separator token
+                  ;;---
+                  (zero-or-one
+                   "::"
+                   ;;---
+                   ;; Location
+                   ;;---
+                   (group (zero-or-more ; /Should/ always exist if "::" exists but be forgiving.
+                           ;; Have to include newlines too, for linking to a region of the file...
+                           ;; So... be quite permissive.
+                           anything)))
+                  string-end)
+                :no-group)
+  "Regex for parsing a `groot' link.
+
+Expect the link format provided to `groot-link--open', which does not have the
+link type included.
+
+That is, expect:
+  \"repo:/path/to/file.el\"
+instead of:
+  \"groot:repo:/path/to/file.el\".")
+;; (let* ((str "repo.name-field:/path/to/some-file.el::;aoeu\nasdf()a){[]!@(&#")
+;;        (match? (string-match groot-link--regex str)))
+;;   (list :match? match?
+;;         :match-0 (when match? (match-string 0 str))
+;;         :match-1 (when match? (match-string 1 str))
+;;         :match-2 (when match? (match-string 2 str))
+;;         :match-3 (when match? (match-string 3 str))))
+
+
+(defun groot-link--parse (link)
+  "Parse LINK into its constituent parts.
+
+LINK should be in format:
+  - repo-name:/path/rooted/in/repo.ext
+  - repo-name:/path/rooted/in/repo.ext::file location string
+
+Return plist of key values:
+  - `:repository' : string: repository name
+  - `:path'       : string: relative path, rooted in repository
+  - `:location'   : string or nil: place in file"
+  (when (string-match groot-link--regex link)
+    (list :repository (match-string 1 link)
+          :path       (match-string 2 link)
+          :location   (match-string 3 link))))
+;; (groot-link--parse "groot:/groot.el")
+;; (groot-link--parse "groot:/groot.el::")
+;; (groot-link--parse "repo.name-field:/path/to/some-file.el::;aoeu\nasdf()a){[]!@(&#")
+
+
 ;;;###autoload
 (defun groot-link--open (link)
   "Open a groot link.
 
 LINK should be in format:
-  - repo-name:/path/rooted/in/repo.ext"
+  - repo-name:/path/rooted/in/repo.ext
+  - repo-name:/path/rooted/in/repo.ext::file location string
+
+Just open the file if no location string.
+Else open the file and then search for location string with `org-link-search'."
   ;; Eat errors and return nil so users don't get their `org-store-link' broken.
   ;; Do not eat errors when `debug-on-error' is true.
   (condition-case-unless-debug error
-      (if-let* ((link-parts (split-string link ":/"))
-                (link-name (nth 0 link-parts))
-                (link-path (nth 1 link-parts)))
-          (let ((repo-path (groot--repository-name-to-path link-name)))
+      (if-let ((link-parts (groot-link--parse link)))
+          (let* ((link-repo (plist-get link-parts :repository))
+                 (link-path (plist-get link-parts :path))
+                 (link-location (plist-get link-parts :location)) ; optional
+                 (repo-path (groot--repository-name-to-path link-repo)))
             ;;------------------------------
             ;; Error Checks
             ;;------------------------------
-            (groot--name-assert "groot-link-open (link-name)" link-name :error? t)
+            (groot--name-assert "groot-link-open (link-repo)" link-repo :error? t)
             (if repo-path
                 (groot--path-assert "groot-link-open (repo-path)" repo-path :error? t :dir? t)
               (error (concat "%s: "
                              "Don't know where repository '%s' is located! "
                              "Add it to: %s%s%s.")
                      "groot-link-open"
-                     link-name
+                     link-repo
                      ;; Add it to:
                      "`groot-repositories'"
                      (if (boundp 'autogit:repos:path/commit)
@@ -751,16 +915,23 @@ LINK should be in format:
                        "")
                      ", or `magit-repository-directories'"))
 
-            ;; `repo-path' is guaranteed to end in dir separator.
+            ;; `repo-path' is guaranteed to end in dir separator so we can just concat.
             (let ((path (groot--path-normalize (concat repo-path link-path)
                                                :file? t)))
-              (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
               (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
 
               ;;------------------------------
               ;; Follow Link
               ;;------------------------------
-              (find-file-other-window path)))
+              ;; Open the file...
+              (find-file-other-window path)
+              ;; ...and find the place in the file, if appropriate.
+              (when (and (stringp link-location)
+                         (not (string-empty-p link-location)))
+                (org-link-search link-location))
+
+              ;; TODO: Search to location if we have one.
+              ))
 
         ;;------------------------------
         ;; ERROR: Bad LINK
@@ -771,7 +942,7 @@ LINK should be in format:
                        "Got repo-name: %S, path: %S")
                "groot-link-open"
                link
-               link-name
+               link-repo
                link-path))
 
     ;;------------------------------
