@@ -345,6 +345,52 @@ Return normalized path or nil."
 ;; (groot-repositories "does-not-exist1")
 
 
+(defun groot-repositories-append (&rest args)
+  "Setter for `groot-repositories'.
+
+Each arg in ARGS should be:
+  - A path.
+  - A cons of '(REPO-NAME . REPO-PATH)
+  - An alist of such conses (e.g. from `groot-path-repositories')."
+  ;; Add each arg to `groot-repositories'.
+  (dolist (arg args)
+    (cond
+     ;;------------------------------
+     ;; `string': Add as a repo.
+     ;;------------------------------
+     ((stringp arg)
+      (let* ((path (groot--repository-path-normalize arg))
+             (name (groot--name-normalize path)))
+        (push (cons name path) groot-repositories)))
+
+     ;;------------------------------
+     ;; `cons': Normalize and add.
+     ;;------------------------------
+     ;; "cons but not list" check:
+     ((and (cdr arg)
+           (atom (cdr arg)))
+      (push (cons (car arg) ; Dunno how to normalize the name, so just leave it as-is.
+                  (groot--repository-path-normalize (cdr arg)))
+            groot-repositories))
+
+     ;;------------------------------
+     ;; `list': Recurse!
+     ;;------------------------------
+     ;; `proper-list-p' to avoid circular lists and dotted lists.
+     ((proper-list-p arg)
+      ;; Easy: Just ask ourselves to to our work for us.
+      (apply #'groot-repositories-append arg))
+
+     ;;------------------------------
+     ;; Fallthrough: Error!
+     ;;------------------------------
+     (t
+      (error "groot-repositories-append: Don't know how to deal with arg: %S"
+             arg)))))
+;; (groot-repositories-append (buffer-file-name))
+;; (apply #'groot-repositories-append (groot-path-repositories "~/.config"))
+
+
 (defun groot--repository-name-to-path (name)
   "Get path to repository NAME.
 
@@ -1023,18 +1069,17 @@ Else open the file and then search for location string with `org-link-search'."
 
 ;;;###autoload
 (defun groot-path-in-repository? (path)
-  "Return non-nil if PATH is or is in git repository.
-
-NOTE: If you use the non-nil return as a path, it is NOT normalized!"
+  "Return non-nil if PATH is or is in git repository."
   ;; 1. PATH must exist.
-  (when-let* ((_ (file-exists-p path))
+  (when-let* ((exists? (file-exists-p path))
               ;; 2. PATH must be in a git repository.
-              (root (magit-toplevel path))
-              ;; 3. Top-level must be ancestor of PATH.
-              )
-    ))
-;; (groot-repository-contains-path? (buffer-file-name))
-;; (groot-repository-contains-path? (path:parent (buffer-file-name)))
+              (root (magit-toplevel path)))
+    ;; 3. Top-level must be the ancestor of PATH or the PATH itself.
+    (or (groot--path-descendant? path root)
+        (string= (groot--path-normalize root :file? t)
+                 (groot--path-normalize path :file? t)))))
+;; (groot-path-in-repository? (buffer-file-name))
+;; (groot-path-in-repository? (path:parent (buffer-file-name)))
 ;; (groot-path-repositories "~/.config/emacs-sn004/packages/user")
 
 
