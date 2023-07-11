@@ -659,26 +659,6 @@ Return absolute filepath."
 ;; Org Link API
 ;;--------------------------------------------------------------------------------
 
-;;;###autoload
-(with-eval-after-load 'org
-  ;; Do we need to wait for magit, or not? Assume not until proven so.
-  ;; (with-eval-after-load 'magit
-
-  ;; NOTE: See docstring for `org-link-parameters' for details of what
-  ;; `org-link-set-parameters' takes as kwargs.
-  (org-link-set-parameters "groot"
-                           :store    #'groot-link--store
-                           :follow   #'groot-link--open
-                           ;; TODO: More org link functionality!
-                           ;; :export   #'groot-link--export
-                           ;; :complete #'groot-link--complete-link
-                           )
-
-  ;; NOTE: Unregister like so:
-  ;;   (org-link-set-parameters "groot" :store nil :follow nil :export nil :complete nil)
-  )
-
-
 (defun groot-link--store? (buffer)
   "Should `groot' be the link type to store this org link?
 
@@ -1301,22 +1281,40 @@ Return list of absolute paths or nil."
 ;; Commands
 ;;--------------------------------------------------------------------------------
 
-;; NOTE: ...org doesn't make this easy... See function `org-store-link'.
-;; TL;DR: Big fucking mess of a function. No interface for others to do
-;; anything like what I wanted to do here?!
-;; So... Oh well?
-;; Just use `org-store-link', you pleb?
-;;
-;; ;;;###autoload
-;; (defun groot-store-link (_prefix)
-;;   "Store an org link of type 'groot'.
-;;
-;; Like `org-store-link' but specific to 'groot'. In case you don't want 'groot'
-;; taking over all Git repo links?"
-;;   (interactive "P")
-;;   (groot-link--store))
+;;;###autoload
+(defun groot-cmd-register (&optional arg)
+  "Register `groot' with `org' as link type \"groot:\".
+
+ARG can be:
+  - nil        : register
+  - prefix arg : unregister
+  - non-nil    : unregister"
+  (interactive "P")
+  ;; Translate ARG into bool `register?'.
+  (let ((register? (not arg)))
+    (with-eval-after-load 'org
+      ;; Do we need to wait for magit, or not? Assume not until proven so.
+
+      ;; NOTE: See docstring for `org-link-parameters' for details of what
+      ;; `org-link-set-parameters' takes as kwargs.
+      ;;
+      ;; NOTE: Manually unregister by setting values to nil:
+      ;;   (org-link-set-parameters "groot" :store nil :follow nil :export nil :complete nil)
+      (org-link-set-parameters "groot"
+                               :store    (when register? #'groot-link--store)
+                               :follow   (when register? #'groot-link--open)
+                               ;; TODO: More org link functionality!
+                               ;; :export   (when register? #'groot-link--export)
+                               ;; :complete (when register? #'groot-link--complete-link)
+                               ))))
 
 
+;;--------------------------------------------------------------------------------
+;; Register with Org on Load
+;;--------------------------------------------------------------------------------
+
+;;;###autoload
+(groot-cmd-register)
 
 
 ;;--------------------------------------------------------------------------------
