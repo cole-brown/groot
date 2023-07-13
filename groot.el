@@ -607,8 +607,8 @@ Return absolute directory (ends in dir separator) path."
                  error?)
             (error "groot--repository-current-path: Not currently in a repository! Current Path: %S"
                    path)
-          ;; path is either in a repo or nil (and they didn't want an error), so return.
-          path)))))
+          ;; `repo' is either the repo root path or nil (and they didn't want an error), so return it.
+          repo)))))
 ;; (groot--repository-current-path)
 ;; (let (default-directory) (groot--repository-current-path))
 ;; (let (default-directory) (groot--repository-current-path :error? t))
