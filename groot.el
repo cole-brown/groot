@@ -337,9 +337,13 @@ Allows for cons or list entries:
 
 Return normalized path or nil."
   (when-let ((value (alist-get name groot-repositories nil nil #'string=)))
-    (groot--path-normalize (if (listp value)
-                               (nth 0 value)
-                             value))))
+    (groot--path-normalize :type 'dir
+                           :path (if (listp value)
+                                     (nth 0 value)
+                                   value))))
+;; (pp groot-repositories)
+;; (groot-repositories "groot")
+;; (groot-repositories "emacs-sn004")
 ;; (setq groot-repositories '((".emacs.d" . "~/.config/emacs-sn004") ("personal" "~/.config/personal")))
 ;; (groot-repositories ".emacs.d")
 ;; (groot-repositories "personal")
@@ -467,33 +471,60 @@ NOTE: No error checking of NAME! Use `groot--name-assert' if desired."
 ;; Normalization
 ;;--------------------------------------------------------------------------------
 
-(cl-defun groot--path-normalize (path &key (file? nil))
+(cl-defun groot--path-normalize (&key path type)
   "Normalize PATH string.
+
+TYPE should be one of: `file', `dir'
 
 If PATH is not a string, normalize to nil.
 Else return PATH that is:
   - absolute
   - abbreviated (e.g. \"~\" instead of \"/home/username\")
-  - FILE?:
-    - nil    : directory path (i.e. must end in dir separator)
-    - non-nil: file path (cannot end in dir separator)
+  - TYPE:
+    - `file' : file path (cannot end in dir separator)
+    - `dir'  : directory path (must end in dir separator)
 
 NOTE: No error checking! Use `groot--path-assert' if desired."
-  (when (stringp path)
-    (abbreviate-file-name ; path abbreviations like "~"
-     (funcall
-      (if file?
-          #'directory-file-name ; as file path
-        #'file-name-as-directory) ; as directory path
-      ;; absolute path
-      (expand-file-name path)))))
-;; (groot--path-normalize "~/.config")
-;; (groot--path-normalize "/home/work/.config")
-;; (groot--path-normalize "actual-package-stuff")
-;; (groot--path-normalize default-directory)
-;; (groot--path-normalize (buffer-file-name (buffer-base-buffer)))
-;; (groot--path-normalize (buffer-file-name (buffer-base-buffer)) :file? t)
-;; (groot--path-normalize 'hi)
+
+  ;;------------------------------
+  ;; Error Checks
+  ;;------------------------------
+  (cond ((or (not path)
+             (not (stringp path)))
+         ;; TODO: error out or always just nil?
+         nil)
+        ((or (not type)
+             (not (symbolp type))
+             (not (memq type '(file dir))))
+         ;; TODO: error out or always just nil?
+         nil)
+
+        ;;------------------------------
+        ;; Normalize
+        ;;------------------------------
+        (t
+         (abbreviate-file-name ; path abbreviations like "~"
+          (funcall
+           (pcase type
+             ('file
+              #'directory-file-name) ; as file path
+             ('dir
+              #'file-name-as-directory) ; as directory path
+             (_
+              ;; TODO: error out or always just nil? Was error checked above...
+              nil))
+           ;; absolute path
+           (expand-file-name path))))))
+;; (groot--path-normalize :type 'file :path "~/.config")
+;; (groot--path-normalize :type 'dir :path "~/.config")
+;; (groot--path-normalize :type 'file :path "/home/work/.config")
+;; (groot--path-normalize :type 'file :path "actual-package-stuff")
+;; (groot--path-normalize :type 'dir :path default-directory)
+;; (groot--path-normalize :type 'file :path (buffer-file-name (buffer-base-buffer)))
+;; (groot--path-normalize :type 'file :path (buffer-file-name (buffer-base-buffer)))
+;; bad -> nil:
+;; (groot--path-normalize :path 'hi)
+;; (groot--path-normalize :type 'file :path 'hi)
 
 
 (defun groot--name-normalize (path)
@@ -505,8 +536,7 @@ If PATH is not a string, normalize name to nil.
 NOTE: No error checking! Use `groot--path-assert' if desired."
   (when (stringp path)
     (file-name-nondirectory ; Get dir name from filepath.
-     (directory-file-name ; Convert dirpath to filepath.
-      (groot--path-normalize path)))))
+     (groot--path-normalize :type 'file :path path))))
 ;; (groot--name-normalize default-directory)
 ;; (groot--name-normalize (buffer-file-name))
 ;; (groot--name-normalize 'hi)
@@ -525,9 +555,10 @@ Return path that is:
 NOTE: No error checking of PATH! Use `groot--path-assert' if desired."
   (when (stringp path)
     ;; `magit' does the heavy lifting.
-    (groot--path-normalize (magit-toplevel path))))
-;; (groot--repository-path-normalize nil)
+    (groot--path-normalize :type 'dir
+                           :path (magit-toplevel path))))
 ;; (groot--repository-path-normalize "~/.config/emacs-sn004/mantle/config")
+;; (groot--repository-path-normalize nil)
 
 
 (defun groot--repository-name-normalize (path)
@@ -555,7 +586,7 @@ Git repo isn't known enough for later link following, signal an error."
                                    (nth 1 entry)
                                  (cdr entry))))
              ;; NOTE: Paths in `groot-repositories' not guarenteed to be normalized!
-             (when (string= (groot--path-normalize entry-path)
+             (when (string= (groot--path-normalize :type 'dir :path entry-path)
                             path-normal)
                (setq alias entry-alias))))
        ;; Did we find an alias?
@@ -577,7 +608,7 @@ ROOT should be a path string that is a parent of PATH.
 
 NOTE: No error checking of parameters! Use `groot--path-assert' if desired."
   (string-trim-left path (regexp-quote root)))
-;; (groot--repository-path-rooted (groot--repository-current-path) (groot--path-normalize (buffer-file-name (buffer-base-buffer)) :file? t))
+;; (groot--repository-path-rooted (groot--repository-current-path) (groot--path-normalize :type 'file :path (buffer-file-name (buffer-base-buffer))))
 
 
 ;;--------------------------------------------------------------------------------
@@ -590,7 +621,7 @@ NOTE: No error checking of parameters! Use `groot--path-assert' if desired."
 If ERROR? is nil, eat error signals and return nil instead.
 
 Return absolute directory (ends in dir separator) path."
-  (let ((path (groot--path-normalize default-directory)))
+  (let ((path (groot--path-normalize :type 'dir :path default-directory)))
     ;; Require `default-directory' exist as a directory.
     (if (not (groot--path-assert "repository-current-path"
                                  path
@@ -631,14 +662,20 @@ Return a string, nil, or raise an error signal."
 ;; (let (default-directory) (groot--repository-current-name :error? nil))
 
 
-(cl-defun groot--path-current (&key (error? t))
+(cl-defun groot--path-current (&key (error? t) relative?)
   "Get absolute path to current file-backed buffer.
 
 If ERROR? is nil, eat error signals and return nil instead.
 
-Return absolute filepath."
+
+If RELATIVE? is nil, return absolute filepath.
+If RELATIVE? is non-nil, return filepath relative to repo root."
+  ;;------------------------------
+  ;; Normalize & Assert the Path
+  ;;------------------------------
   ;; Get filename of current buffer (if indirect, get filename of base buffer).
-  (let ((path (groot--path-normalize (buffer-file-name (buffer-base-buffer)))))
+  (let ((path (groot--path-normalize :type 'file
+                                     :path (buffer-file-name (buffer-base-buffer)))))
     ;; Require the file actually exist? If that's annoying for some reason, can
     ;; remove or make another kwarg...
     (if (not (groot--path-assert "path-current"
@@ -649,8 +686,16 @@ Return absolute filepath."
         ;; make sure to not continue on doing stuff.
         nil
 
-      ;; Nothing more to do.
-      path)))
+      ;;------------------------------
+      ;; Return the Path
+      ;;------------------------------
+      (if relative?
+          ;; Relative Path
+          (groot--repository-path-rooted (groot--repository-current-path :error? error?)
+                                         path)
+
+        ;; Absolute Path
+        path))))
 ;; (groot--path-current)
 ;; (let (default-directory) (groot--path-current))
 ;; (let (default-directory) (groot--path-current :error? nil))
@@ -772,8 +817,8 @@ Link will be in format:
         ;;------------------------------
         (let ((repo-path (groot--repository-current-path :error? t))
               (repo-name (groot--repository-current-name :error? t))
-              (buffer-path (groot--path-normalize (buffer-file-name (buffer-base-buffer))
-                                                  :file? t)))
+              (buffer-path (groot--path-normalize :type 'file
+                                                  :path (buffer-file-name (buffer-base-buffer)))))
           (groot--path-assert "groot-link--store"
                               buffer-path
                               :error? t
@@ -944,8 +989,8 @@ Else open the file and then search for location string with `org-link-search'."
                        ", or `magit-repository-directories'"))
 
               ;; `repo-path' is guaranteed to end in dir separator so we can just concat.
-              (let ((path (groot--path-normalize (concat repo-path link-path)
-                                                 :file? t)))
+              (let ((path (groot--path-normalize :type 'file
+                                                 :path (concat repo-path link-path))))
                 (groot--path-assert (format "%s (path)" func-name) path :error? t :dir? nil)
 
                 ;;------------------------------
@@ -1058,8 +1103,8 @@ Else open the file and then search for location string with `org-link-search'."
               (root (magit-toplevel path)))
     ;; 3. Top-level must be the ancestor of PATH or the PATH itself.
     (or (groot--path-descendant? path root)
-        (string= (groot--path-normalize root :file? t)
-                 (groot--path-normalize path :file? t)))))
+        (string= (groot--path-normalize :type 'file :path root)
+                 (groot--path-normalize :type 'file :path path)))))
 ;; (groot-path-in-repository? (buffer-file-name))
 ;; (groot-path-in-repository? (path:parent (buffer-file-name)))
 ;; (groot-path-repositories "~/.config/emacs-sn004/packages/user")
@@ -1118,7 +1163,7 @@ NOTE: These should be compiled regex strings.")
              (file-directory-p parent-path))
     (let (child-dirs
           ;; Guarentee ourselves a dirpath.
-          (parent-path (groot--path-normalize parent-path)))
+          (parent-path (groot--path-normalize :type 'dir :path parent-path)))
       ;; Find all children files...
       (dolist (child (directory-files-and-attributes parent-path))
         (let* ((child-name  (car child))
@@ -1201,8 +1246,8 @@ Special Cases:
 CHILD and PARENT cannot be the same path.
 
 NOTE: CHILD and PARENT are normalized before comparing."
-  (let ((child (groot--path-normalize child :file? t))
-        (parent (groot--path-normalize parent :file? t)))
+  (let ((child (groot--path-normalize :type 'file :path child))
+        (parent (groot--path-normalize :type 'file :path parent)))
     (unless (string= child parent) ;; "/" is not a child of itself.
       (string= (groot--path-parent child)
                parent))))
@@ -1217,13 +1262,16 @@ DESCENDANT and ANCESTOR must be strings.
 DESCENDANT and ANCESTOR cannot be the same path.
 
 Will normalize the paths before comparing."
-  (let ((descendant (groot--path-normalize descendant))
-        (ancestor (groot--path-normalize ancestor)))
+  (let ((descendant (groot--path-normalize :type 'file :path descendant))
+        (ancestor (groot--path-normalize :type 'file :path ancestor)))
     (unless (string= descendant ancestor)
       (string-prefix-p ancestor
                        descendant))))
 ;; Yes:
 ;; (groot--path-descendant? "/foo/bar" "/foo")
+;; (groot--path-descendant? "/foo/bar/" "/foo")
+;; (groot--path-descendant? "/foo/bar" "/foo/")
+;; (groot--path-descendant? "/foo/bar/" "/foo/")
 ;; No:
 ;; (groot--path-descendant? "/path/to/foo/" "/path/to/foo/child")
 
@@ -1240,7 +1288,7 @@ Return list of absolute paths or nil."
     (error "groot-path-repositories: PATH must be a string! Got: %S"
            path))
 
-  (setq path (groot--path-normalize path :file? t))
+  (setq path (groot--path-normalize :type 'file :path path))
 
   (unless (file-exists-p path)
     (error "groot-path-repositories: PATH does not exist! %s"
