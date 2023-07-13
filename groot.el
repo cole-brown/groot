@@ -3,7 +3,7 @@
 ;; Author:     Cole Brown <http://github/cole-brown>
 ;; Maintainer: Cole Brown <code@brown.dev>
 ;; Created:    2023-06-06
-;; Modified:   2023-06-06
+;; Timestamp:  2023-07-13
 ;; Homepage:   https://github.com/cole-brown/groot
 ;; Keywords:   hypermedia vc
 ;;
@@ -75,6 +75,7 @@
 ;;    git config groot.log http://example.com/repo/history/%r
 ;;
 ;;; Code:
+
 
 ;;------------------------------------------------------------------------------
 ;; Prereqs & Compatibility
@@ -1306,7 +1307,10 @@ ARG can be:
                                ;; TODO: More org link functionality!
                                ;; :export   (when register? #'groot-link--export)
                                ;; :complete (when register? #'groot-link--complete-link)
-                               ))))
+                               ))
+
+    (when (called-interactively-p)
+      (message "groot %s org-link" (if register? "registered with" "unregistered from")))))
 
 
 ;;--------------------------------------------------------------------------------
