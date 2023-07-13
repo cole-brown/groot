@@ -774,7 +774,7 @@ Link will be in format:
               (repo-name (groot--repository-current-name :error? t))
               (buffer-path (groot--path-normalize (buffer-file-name (buffer-base-buffer))
                                                   :file? t)))
-          (groot--path-assert "groot-link-store"
+          (groot--path-assert "groot-link--store"
                               buffer-path
                               :error? t
                               :dir? nil)
@@ -916,72 +916,73 @@ LINK should be in format:
 
 Just open the file if no location string.
 Else open the file and then search for location string with `org-link-search'."
-  ;; Eat errors and return nil so users don't get their `org-store-link' broken.
-  ;; Do not eat errors when `debug-on-error' is true.
-  (condition-case-unless-debug error
-      (if-let ((link-parts (groot-link--parse link)))
-          (let* ((link-repo (plist-get link-parts :repository))
-                 (link-path (plist-get link-parts :path))
-                 (link-location (plist-get link-parts :location)) ; optional
-                 (repo-path (groot--repository-name-to-path link-repo)))
-            ;;------------------------------
-            ;; Error Checks
-            ;;------------------------------
-            (groot--name-assert "groot-link-open (link-repo)" link-repo :error? t)
-            (if repo-path
-                (groot--path-assert "groot-link-open (repo-path)" repo-path :error? t :dir? t)
-              (error (concat "%s: "
-                             "Don't know where repository '%s' is located! "
-                             "Add it to: %s%s%s.")
-                     "groot-link-open"
-                     link-repo
-                     ;; Add it to:
-                     "`groot-repositories'"
-                     (if (boundp 'autogit:repos:path/commit)
-                         ", `autogit:repos:path/commit', `autogit:repos:path/watch'"
-                       "")
-                     ", or `magit-repository-directories'"))
-
-            ;; `repo-path' is guaranteed to end in dir separator so we can just concat.
-            (let ((path (groot--path-normalize (concat repo-path link-path)
-                                               :file? t)))
-              (groot--path-assert "groot-link-open (path)" path :error? t :dir? nil)
-
+  (let ((func-name "groot-link--open"))
+    ;; Eat errors and return nil so users don't get their `org-store-link' broken.
+    ;; Do not eat errors when `debug-on-error' is true.
+    (condition-case-unless-debug error
+        (if-let ((link-parts (groot-link--parse link)))
+            (let* ((link-repo (plist-get link-parts :repository))
+                   (link-path (plist-get link-parts :path))
+                   (link-location (plist-get link-parts :location)) ; optional
+                   (repo-path (groot--repository-name-to-path link-repo)))
               ;;------------------------------
-              ;; Follow Link
+              ;; Error Checks
               ;;------------------------------
-              ;; Open the file...
-              (find-file-other-window path)
-              ;; ...and find the place in the file, if appropriate.
-              (when (and (stringp link-location)
-                         (not (string-empty-p link-location)))
-                (org-link-search link-location))
+              (groot--name-assert (format "%s (link-repo)" func-name) link-repo :error? t)
+              (if repo-path
+                  (groot--path-assert (format "%s (repo-path)" func-name) repo-path :error? t :dir? t)
+                (error (concat "%s: "
+                               "Don't know where repository '%s' is located! "
+                               "Add it to: %s%s%s.")
+                       func-name
+                       link-repo
+                       ;; Add it to:
+                       "`groot-repositories'"
+                       (if (boundp 'autogit:repos:path/commit)
+                           ", `autogit:repos:path/commit', `autogit:repos:path/watch'"
+                         "")
+                       ", or `magit-repository-directories'"))
 
-              ;; TODO: Search to location if we have one.
-              ))
+              ;; `repo-path' is guaranteed to end in dir separator so we can just concat.
+              (let ((path (groot--path-normalize (concat repo-path link-path)
+                                                 :file? t)))
+                (groot--path-assert (format "%s (path)" func-name) path :error? t :dir? nil)
 
-        ;;------------------------------
-        ;; ERROR: Bad LINK
-        ;;------------------------------
-        (error (concat "%s: "
-                       "Invalid `groot' link: \"groot:%s\"! "
-                       "Expected format of: \"repo-name:/relative/path/to/file.ext\". "
-                       "Got repo-name: %S, path: %S")
-               "groot-link-open"
-               link
-               link-repo
-               link-path))
+                ;;------------------------------
+                ;; Follow Link
+                ;;------------------------------
+                ;; Open the file...
+                (find-file-other-window path)
+                ;; ...and find the place in the file, if appropriate.
+                (when (and (stringp link-location)
+                           (not (string-empty-p link-location)))
+                  (org-link-search link-location))
 
-    ;;------------------------------
-    ;; Error Handling
-    ;;------------------------------
-    ;; If `debug-on-error' is enabled, errors will happen as usual.
-    ;; Otherwise, downgrade to warning or just quietly return nil.
-    (error (if groot--org-api-warn-on-error
-               (warn "[ERROR] groot-link--open: caught error '%S': %s"
-                     (car error)
-                     (error-message-string error))
-             nil))))
+                ;; TODO: Search to location if we have one.
+                ))
+
+          ;;------------------------------
+          ;; ERROR: Bad LINK
+          ;;------------------------------
+          (error (concat "%s: "
+                         "Invalid `groot' link: \"groot:%s\"! "
+                         "Expected format of: \"repo-name:/relative/path/to/file.ext\". "
+                         "Got repo-name: %S, path: %S")
+                 func-name
+                 link
+                 link-repo
+                 link-path))
+
+      ;;------------------------------
+      ;; Error Handling
+      ;;------------------------------
+      ;; If `debug-on-error' is enabled, errors will happen as usual.
+      ;; Otherwise, downgrade to warning or just quietly return nil.
+      (error (if groot--org-api-warn-on-error
+                 (warn "[ERROR] groot-link--open: caught error '%S': %s"
+                       (car error)
+                       (error-message-string error))
+               nil)))))
 ;; groot-repositories
 ;; (push (cons "groot" (groot--repository-current-path :error? t)) groot-repositories)
 
