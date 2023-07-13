@@ -1313,6 +1313,29 @@ ARG can be:
       (message "groot %s org-link" (if register? "registered with" "unregistered from")))))
 
 
+(defun groot-cmd-warn-on-error (&optional arg)
+  "Enable, disable, or toggle `groot--org-api-warn-on-error', depending on ARG.
+
+ARG should be:
+  - nil, `:toggle', `toggle' : toggle
+  - `:enable', `enable'      : enable
+  - `:disable', `disable'    : disable"
+  (interactive)
+
+  (setq groot--org-api-warn-on-error
+        (pcase arg
+          ((or 'nil :toggle 'toggle)
+           (not groot--org-api-warn-on-error))
+          ((or :enable 'enable)
+           t)
+          ((or :disable 'disable)
+           nil)))
+
+    (when (called-interactively-p)
+      (message "groot: warn-on-error %s"
+               (if groot--org-api-warn-on-error "enabled" "disabled"))))
+
+
 ;;--------------------------------------------------------------------------------
 ;; Register with Org on Load
 ;;--------------------------------------------------------------------------------
