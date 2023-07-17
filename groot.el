@@ -3,7 +3,7 @@
 ;; Author:     Cole Brown <http://github/cole-brown>
 ;; Maintainer: Cole Brown <code@brown.dev>
 ;; Created:    2023-06-06
-;; Timestamp:  2023-07-13
+;; Timestamp:  2023-07-17
 ;; Homepage:   https://github.com/cole-brown/groot
 ;; Keywords:   hypermedia vc
 ;;
@@ -212,8 +212,19 @@ See `groot-link--store?' for default ignores."
 
 
 ;;--------------------------------------------------------------------------------
-;; Variables
+;; Error Signalling
 ;;--------------------------------------------------------------------------------
+
+(define-error 'groot-error              "Groot Error")
+(define-error 'groot-error--path        "Bad Path"               'groot-error)
+(define-error 'groot-error--repo        "Repository Error"       'groot-error)
+(define-error 'groot-error--not-in-repo "Not in a Repository"    'groot-error--repo)
+(define-error 'groot-error--repo-path   "Bad Repository Path"    '(groot-error--path groot-error--repo))
+(define-error 'groot-error--mode        "Unsupported Major Mode" 'groot-error)
+(define-error 'groot-error--link        "Bad `groot' Link"       'groot-error)
+;; (signal 'groot-error--not-in-repo '(x y))
+;; (error "hi")
+
 
 (defvar groot--org-api-warn-on-error nil
   "Should errors during `org' API usage be noted?
@@ -225,6 +236,59 @@ for the groot links. It will not eat the errors when `debug-on-error' is true.
 This setting is for whether to `message' information about consumed errors.
 
 Probably don't need to enable this. Mainly for the dev.")
+
+
+(defun groot--error (type message &rest args)
+  "Signal an error of TYPE with a formatted message, like function `error'.
+
+TYPE should be `groot-error' or a child error type.
+
+MESSAGE should be a (formatting) string.
+
+ARGS should match up to formatting fields in MESSAGE."
+  (declare (indent 1))
+  ;; NOTE: Do not downgrade from error to warning here; ignore
+  ;; `groot--org-api-warn-on-error'. That is for `groot-link' functions to
+  ;; handle.
+  (signal type
+          ;; NOTE: Function `error' is (signal 'error '("formatted message")),
+          ;; basically. So imitate that?
+          (list (apply #'format message args))))
+;; (groot--error 'groot-error--not-in-repo "hello %S" 'there)
+;; (error "hello %S" 'there)
+
+
+(defun groot--error-or-nil (error? type message &rest args)
+  "Signal TYPE error or ignore and return nil.
+
+If ERROR? is non-nil, signal an error of TYPE with a formatted message, like
+function `error'. Else do nothing and return nil, like `ignore'.
+
+TYPE should be `groot-error' or a child error type.
+
+MESSAGE should be a (formatting) string.
+
+ARGS should match up to formatting fields in MESSAGE."
+  (declare (indent 2))
+  (when error?
+    (apply #'groot--error type message args)))
+
+
+(defun groot--org-api--handle-error (caller error-value)
+  "Handle ERROR-VALUE for the `org' API functions, which cannot raise errors.
+
+If `groot--org-api-warn-on-error' is non-nil, convert ERROR-VALUE's message
+to a warning message. Else drop ERROR-VALUE and return nil.
+
+CALLER should be the calling function's name, for the +error+ warning message.
+
+Warning message format is:
+  \"[ERROR] $CALLER: caught error '$ERROR-TYPE': $ERROR-MESSAGE\""
+  (when groot--org-api-warn-on-error
+    (warn "[ERROR] %s: caught error '%S': %s"
+          caller
+          (car error-value)
+          (error-message-string error-value))))
 
 
 ;;--------------------------------------------------------------------------------
@@ -253,27 +317,24 @@ Return PATH, nil, or raise error signal."
   ;; Invalid
   ;;------------------------------
   (cond ((not (stringp path))
-         (if error?
-             (error "%s: PATH must be a string or nil, got '%s': '%S'"
-                    context
-                    (type-of path)
-                    path)
-           nil))
+         (groot--error-or-nil error? 'groot-error--path
+           "%s: PATH must be a string or nil, got '%s': '%S'"
+           context
+           (type-of path)
+           path))
 
         ((not (file-exists-p path))
-         (if error?
-             (error "%s: PATH does not exist? '%s'"
-                    context
-                    path)
-           nil))
+         (groot--error-or-nil error? 'groot-error--path
+           "%s: PATH does not exist? '%s'"
+           context
+           path))
 
         ((and dir?
               (not (file-directory-p path)))
-         (if error?
-             (error "%s: PATH is not a directory? '%s'"
-                    context
-                    path)
-           nil))
+         (groot--error-or-nil error? 'groot-error--path
+           "%s: PATH is not a directory? '%s'"
+           context
+           path))
 
         ;;------------------------------
         ;; Valid
@@ -304,12 +365,11 @@ Return NAME, nil, or raise error signal."
   ;; Invalid
   ;;------------------------------
   (cond ((not (stringp name))
-         (if error?
-             (error "%s: NAME must be a string, got '%s': '%S'"
-                    context
-                    (type-of name)
-                    name)
-           nil))
+         (groot--error-or-nil error? 'groot-error
+           "%s: NAME must be a string, got '%s': '%S'"
+           context
+           (type-of name)
+           name))
 
         ;;------------------------------
         ;; Valid
@@ -634,10 +694,10 @@ Return absolute directory (ends in dir separator) path."
       ;; Figure out repo's root path.
       (let ((repo (groot--repository-path-normalize path)))
         ;; ...Are we _actually in a repo?
-        (if (and (not repo)
-                 error?)
-            (error "groot--repository-current-path: Not currently in a repository! Current Path: %S"
-                   path)
+        (if (not repo)
+            (groot--error-or-nil error? 'groot-error--not-in-repo
+              "groot--repository-current-path: Not currently in a repository! Current Path: %S"
+              path)
           ;; `repo' is either the repo root path or nil (and they didn't want an error), so return it.
           repo)))))
 ;; (groot--repository-current-path)
@@ -768,10 +828,11 @@ Return a string or nil."
         ;;   [[file:/usr/share/emacs/28.1/lisp/org/ol.el.gz::and (buffer-file-name (buffer-base-buffer)) (derived-mode-p 'org-mode]]
         ((and (buffer-file-name (buffer-base-buffer))
               (derived-mode-p 'org-mode))
-         (error "%s: Major mode '%S' is not supported due to being (derived from) '%S'!"
-                "groot-link--store--file-location"
-                major-mode
-                (derived-mode-p 'org-mode)))
+         (groot--error 'groot-error--mode
+           "%s: Major mode '%S' is not supported due to being (derived from) '%S'!"
+           "groot-link--store--file-location"
+           major-mode
+           (derived-mode-p 'org-mode)))
 
         ;;------------------------------
         ;; Context Search String
@@ -855,11 +916,14 @@ Link will be in format:
     ;;------------------------------
     ;; If `debug-on-error' is enabled, errors will happen as usual.
     ;; Otherwise, downgrade to warning or just quietly return nil.
-    (error (if groot--org-api-warn-on-error
-               (warn "[ERROR] groot-link--store: caught error '%S': %s"
-                     (car error)
-                     (error-message-string error))
-             nil))))
+    ;;---
+    ;; Our Error Types
+    ;;---
+    (groot-error (groot--org-api--handle-error "groot-link--store" error))
+    ;;---
+    ;; Any Other Error Types
+    ;;---
+    (error (groot--org-api--handle-error "groot-link--store" error))))
 ;; (groot-link--store)
 
 
@@ -976,17 +1040,18 @@ Else open the file and then search for location string with `org-link-search'."
               (groot--name-assert (format "%s (link-repo)" func-name) link-repo :error? t)
               (if repo-path
                   (groot--path-assert (format "%s (repo-path)" func-name) repo-path :error? t :dir? t)
-                (error (concat "%s: "
-                               "Don't know where repository '%s' is located! "
-                               "Add it to: %s%s%s.")
-                       func-name
-                       link-repo
-                       ;; Add it to:
-                       "`groot-repositories'"
-                       (if (boundp 'autogit:repos:path/commit)
-                           ", `autogit:repos:path/commit', `autogit:repos:path/watch'"
-                         "")
-                       ", or `magit-repository-directories'"))
+                (groot--error 'groot-error--repo
+                  (concat "%s: "
+                          "Don't know where repository '%s' is located! "
+                          "Add it to: %s%s%s.")
+                  func-name
+                  link-repo
+                  ;; Add it to:
+                  "`groot-repositories'"
+                  (if (boundp 'autogit:repos:path/commit)
+                      ", `autogit:repos:path/commit', `autogit:repos:path/watch'"
+                    "")
+                  ", or `magit-repository-directories'"))
 
               ;; `repo-path' is guaranteed to end in dir separator so we can just concat.
               (let ((path (groot--path-normalize :type 'file
@@ -1009,25 +1074,29 @@ Else open the file and then search for location string with `org-link-search'."
           ;;------------------------------
           ;; ERROR: Bad LINK
           ;;------------------------------
-          (error (concat "%s: "
-                         "Invalid `groot' link: \"groot:%s\"! "
-                         "Expected format of: \"repo-name:/relative/path/to/file.ext\". "
-                         "Got repo-name: %S, path: %S")
-                 func-name
-                 link
-                 link-repo
-                 link-path))
+          (groot--error 'groot-error--link
+            (concat "%s: "
+                    "Invalid `groot' link: \"groot:%s\"! "
+                    "Expected format of: \"repo-name:/relative/path/to/file.ext\". "
+                    "Got repo-name: %S, path: %S")
+            func-name
+            link
+            link-repo
+            link-path))
 
       ;;------------------------------
       ;; Error Handling
       ;;------------------------------
       ;; If `debug-on-error' is enabled, errors will happen as usual.
       ;; Otherwise, downgrade to warning or just quietly return nil.
-      (error (if groot--org-api-warn-on-error
-                 (warn "[ERROR] groot-link--open: caught error '%S': %s"
-                       (car error)
-                       (error-message-string error))
-               nil)))))
+      ;;---
+      ;; Our Error Types
+      ;;---
+      (groot-error (groot--org-api--handle-error "groot-link--open" error))
+      ;;---
+      ;; Any Other Error Types
+      ;;---
+      (error (groot--org-api--handle-error "groot-link--open" error)))))
 ;; groot-repositories
 ;; (push (cons "groot" (groot--repository-current-path :error? t)) groot-repositories)
 
@@ -1129,22 +1198,25 @@ NOTE: These should be compiled regex strings.")
         (regex-list regexes) ;; Shallow copy so we can pop without possibly changing caller's list.
         ignore?)
     (unless (stringp path)
-      (error "%s: PATH must be a string! Got: %S"
-             func-name
-             path))
+      (groot--error 'groot-error--path
+        "%s: PATH must be a string! Got: %S"
+        func-name
+        path))
     (unless (listp regexes)
-      (error "%s: REGEXES must be a list of regex strings! Got: %S"
-             func-name
-             regexes))
+      (groot--error 'groot-error
+        "%s: REGEXES must be a list of regex strings! Got: %S"
+        func-name
+        regexes))
 
     (while (and (not ignore?)
                 regex-list)
       (let ((regex (pop regex-list)))
         (unless (stringp regex)
-          (error "%s: Regex must be a string! Got %s: %S"
-                 func-name
-                 (type-of regex)
-                 regex))
+          (groot--error 'groot-error
+            "%s: Regex must be a string! Got %s: %S"
+            func-name
+            (type-of regex)
+            regex))
 
         (when (string-match regex path)
           ;; Set our return & stop-looping-early value.
@@ -1197,10 +1269,11 @@ NOTE: These should be compiled regex strings.")
                 ;;---
                 ;; ...are there any other attr types? There are other file types, like sockets.
                 (t
-                 (error "%s: '%s': Unhandled file-attribute-type: %S"
-                        "groot--path-children"
-                        child-path
-                        (file-attribute-type child-attrs))))))
+                 (groot--error 'groot-error--path
+                   "%s: '%s': Unhandled file-attribute-type: %S"
+                   "groot--path-children"
+                   child-path
+                   (file-attribute-type child-attrs))))))
 
       ;;------------------------------
       ;; Done
@@ -1285,17 +1358,20 @@ Return list of absolute paths or nil."
   ;; Error Checking & Normalization
   ;;------------------------------
   (unless (stringp path)
-    (error "groot-path-repositories: PATH must be a string! Got: %S"
-           path))
+    (groot--error 'groot-error--repo-path
+      "groot-path-repositories: PATH must be a string! Got: %S"
+      path))
 
   (setq path (groot--path-normalize :type 'file :path path))
 
   (unless (file-exists-p path)
-    (error "groot-path-repositories: PATH does not exist! %s"
-           path))
+    (groot--error 'groot-error--repo-path
+      "groot-path-repositories: PATH does not exist! %s"
+      path))
   (unless (file-directory-p path)
-    (error "groot-path-repositories: PATH is not a directory! %s"
-           path))
+    (groot--error 'groot-error--repo-path
+      "groot-path-repositories: PATH is not a directory! %s"
+      path))
 
   ;;------------------------------
   ;; Find Git Repos.
@@ -1380,9 +1456,9 @@ ARG should be:
           ((or :disable 'disable)
            nil)))
 
-    (when (called-interactively-p)
-      (message "groot: warn-on-error %s"
-               (if groot--org-api-warn-on-error "enabled" "disabled"))))
+  (when (called-interactively-p)
+    (message "groot: warn-on-error %s"
+             (if groot--org-api-warn-on-error "enabled" "disabled"))))
 
 
 ;;--------------------------------------------------------------------------------
