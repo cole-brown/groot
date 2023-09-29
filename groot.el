@@ -3,7 +3,7 @@
 ;; Author:     Cole Brown <http://github/cole-brown>
 ;; Maintainer: Cole Brown <code@brown.dev>
 ;; Created:    2023-06-06
-;; Timestamp:  2023-07-17
+;; Timestamp:  2023-09-29
 ;; Homepage:   https://github.com/cole-brown/groot
 ;; Keywords:   hypermedia vc
 ;;
@@ -919,11 +919,17 @@ Link will be in format:
     ;;---
     ;; Our Error Types
     ;;---
-    (groot-error (groot--org-api--handle-error "groot-link--store" error))
+    (groot-error
+     (groot--org-api--handle-error "groot-link--store" error)
+     ;; Always return nil so that org doesn't think we did something.
+     nil)
     ;;---
     ;; Any Other Error Types
     ;;---
-    (error (groot--org-api--handle-error "groot-link--store" error))))
+    (error
+     (groot--org-api--handle-error "groot-link--store" error)
+     ;; Always return nil so that org doesn't think we did something.
+     nil)))
 ;; (groot-link--store)
 
 
