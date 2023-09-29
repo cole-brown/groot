@@ -765,7 +765,7 @@ If RELATIVE? is non-nil, return filepath relative to repo root."
 ;; Org Link API
 ;;--------------------------------------------------------------------------------
 
-(defun groot-link--store? (buffer)
+(defun groot-link--store? (buffer repo-name)
   "Should `groot' be the link type to store this org link?
 
 Annoyingly, we can't have a low priority of any sort, and,
@@ -774,7 +774,9 @@ highest priority until something else is added. So instead look
 at major modes and stuff and quit early if we thing someone else
 can do a better job of this.
 
-BUFFER should be the buffer that org is asking for a link to."
+BUFFER should be the buffer that org is asking for a link to.
+
+REPO-NAME should be the repository that the buffer exists in."
   (cond
    ;;------------------------------
    ;; Do Not Store Link!
@@ -792,6 +794,14 @@ BUFFER should be the buffer that org is asking for a link to."
                   predicates)
         (setq ignore? (funcall (pop predicates) buffer)))
       ignore?))
+
+   ;; Ignore buffers without backing files.
+   ((not (buffer-file-name (buffer-base-buffer)))
+    nil)
+
+   ;; Check if `groot' knows about this repository.
+   ((not (groot--repository-name-to-path repo-name))
+    nil)
 
    ;;------------------------------
    ;; ...Maybe Store Link?
@@ -869,47 +879,47 @@ Link will be in format:
   ;; Eat errors and return nil so users don't get their `org-store-link' broken.
   ;; Do not eat errors when `debug-on-error' is true.
   (condition-case-unless-debug error
-      ;;------------------------------
-      ;; Should We Make This Link?
-      ;;------------------------------
-      (when (groot-link--store? (current-buffer))
+      (let ((repo-name (groot--repository-current-name :error? t)))
         ;;------------------------------
-        ;; Sanity Checks
+        ;; Should We Make This Link?
         ;;------------------------------
-        (let ((repo-path (groot--repository-current-path :error? t))
-              (repo-name (groot--repository-current-name :error? t))
-              (buffer-path (groot--path-normalize :type 'file
-                                                  :path (buffer-file-name (buffer-base-buffer)))))
-          (groot--path-assert "groot-link--store"
-                              buffer-path
-                              :error? t
-                              :dir? nil)
+        (when (groot-link--store? (current-buffer) repo-name)
+          ;;------------------------------
+          ;; Sanity Checks
+          ;;------------------------------
+          (let ((repo-path (groot--repository-current-path :error? t))
+                (buffer-path (groot--path-normalize :type 'file
+                                                    :path (buffer-file-name (buffer-base-buffer)))))
+            (groot--path-assert "groot-link--store"
+                                buffer-path
+                                :error? t
+                                :dir? nil)
 
-          ;;------------------------------
-          ;; Create the Link
-          ;;------------------------------
-          ;; Convert full path to relative/rooted path.
-          (let ((link-path (groot--repository-path-rooted repo-path buffer-path)))
-            (if-let ((link-location (groot-link--store--file-location)))
+            ;;------------------------------
+            ;; Create the Link
+            ;;------------------------------
+            ;; Convert full path to relative/rooted path.
+            (let ((link-path (groot--repository-path-rooted repo-path buffer-path)))
+              (if-let ((link-location (groot-link--store--file-location)))
+                  (org-link-store-props :type "groot"
+                                        :link (format "groot:%s:/%s::%s"
+                                                      repo-name
+                                                      link-path
+                                                      link-location)
+                                        ;; No description for now?
+                                        ;; :description (format "%s:/%s"
+                                        ;;                      repo-name
+                                        ;;                      (string-trim-left buffer-path repo-path))
+                                        )
                 (org-link-store-props :type "groot"
-                                      :link (format "groot:%s:/%s::%s"
+                                      :link (format "groot:%s:/%s"
                                                     repo-name
-                                                    link-path
-                                                    link-location)
-                                      ;; No description for now?
-                                      ;; :description (format "%s:/%s"
-                                      ;;                      repo-name
-                                      ;;                      (string-trim-left buffer-path repo-path))
-                                      )
-              (org-link-store-props :type "groot"
-                                    :link (format "groot:%s:/%s"
-                                                  repo-name
-                                                  link-path))
-              ;; No description for now?
-              ;; :description (format "%s:/%s"
-              ;;                      repo-name
-              ;;                      (string-trim-left buffer-path repo-path))
-              ))))
+                                                    link-path))
+                ;; No description for now?
+                ;; :description (format "%s:/%s"
+                ;;                      repo-name
+                ;;                      (string-trim-left buffer-path repo-path))
+                )))))
 
     ;;------------------------------
     ;; Error Handling
